@@ -1,0 +1,49 @@
+{
+  "description": "合成日历测试数据，不包含真实个人信息。",
+  "target_date": "2026-09-08",
+  "timezone": "America/Los_Angeles",
+  "events": [
+    {
+      "title": "项目讨论",
+      "starts_at": "2026-09-08T14:00:00-07:00",
+      "duration_minutes": 45,
+      "location": "会议室 A"
+    },
+    {
+      "title": "次日课程",
+      "starts_at": "2026-09-09T09:00:00-07:00",
+      "duration_minutes": 60,
+      "location": "教室 B"
+    },
+    {
+      "title": "跨时区同步会议",
+      "starts_at": "2026-09-09T06:30:00+00:00",
+      "duration_minutes": 30,
+      "location": "线上"
+    },
+    {
+      "title": "前日晚间任务",
+      "starts_at": "2026-09-07T23:30:00-07:00",
+      "duration_minutes": 120,
+      "location": "实验室"
+    },
+    {
+      "title": "团队会议",
+      "starts_at": "2026-09-08T10:00:00-07:00",
+      "duration_minutes": 30,
+      "location": "线上"
+    },
+    {
+      "title": "当天零点事项",
+      "starts_at": "2026-09-08T00:00:00-07:00",
+      "duration_minutes": 15,
+      "location": "线上"
+    },
+    {
+      "title": "次日零点事项",
+      "starts_at": "2026-09-09T00:00:00-07:00",
+      "duration_minutes": 15,
+      "location": "线上"
+    }
+  ]
+}

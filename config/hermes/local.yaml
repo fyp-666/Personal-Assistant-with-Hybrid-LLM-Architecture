@@ -1,0 +1,25 @@
+# Text-only local Gemma profile, served by Ollama in WSL.
+model:
+  provider: custom
+  default: gemma4:e4b-it-qat
+  base_url: http://127.0.0.1:11434/v1
+  context_length: 65536
+  ollama_num_ctx: 65536
+  max_tokens: 256
+agent:
+  coding_context: "off"
+  reasoning_effort: "none"
+platform_toolsets:
+  cli: []
+fallback_model: null
+fallback_providers: []
+compression:
+  enabled: false
+memory:
+  memory_enabled: false
+  user_profile_enabled: true  # Load user-saved preferences; tools remain disabled.
+auxiliary:
+  title_generation:
+    enabled: false
+  background_review:
+    enabled: false

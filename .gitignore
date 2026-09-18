@@ -216,3 +216,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local checkpoints, synthetic smoke results, and historical Hermes probes
+/.hermes-runtime/
+
+# Keep the automated test suite local; do not publish it.
+/tests/

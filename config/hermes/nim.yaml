@@ -1,0 +1,20 @@
+# Text-only NVIDIA NIM profile. Store NVIDIA_API_KEY in this profile's .env.
+model:
+  provider: nvidia
+  default: nvidia/nemotron-3-super-120b-a12b
+agent:
+  coding_context: off
+platform_toolsets:
+  cli: []
+fallback_model: null
+fallback_providers: []
+compression:
+  enabled: false
+memory:
+  memory_enabled: false
+  user_profile_enabled: false
+auxiliary:
+  title_generation:
+    enabled: false
+  background_review:
+    enabled: false
