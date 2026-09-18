@@ -10,7 +10,7 @@ from email.parser import BytesParser
 from html.parser import HTMLParser
 from pathlib import Path
 
-from .email import Email
+from features.email import Email
 
 
 class GmailError(RuntimeError):

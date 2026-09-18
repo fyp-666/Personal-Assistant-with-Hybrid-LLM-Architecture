@@ -3,7 +3,7 @@
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
-from .routing import Provider, RoutePlan
+from core.routing import Provider, RoutePlan
 
 
 class ProviderError(RuntimeError):

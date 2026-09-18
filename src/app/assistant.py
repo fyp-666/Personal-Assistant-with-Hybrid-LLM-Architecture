@@ -4,12 +4,18 @@ import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 
-from .conversation import Conversation
-from .email import Email, render_email_summary, summarize_email
-from .execution import ExecutionResult, ProviderError, execute_plan
-from .intent import IdentifiedTask, TaskType, identify_task
-from .memory import MemoryUpdate, render_memory_update
-from .routing import Complexity, Privacy, Provider, RequestContext, plan_route
+from app.conversation import Conversation
+from app.intent import IdentifiedTask, TaskType, identify_task
+from core.execution import ExecutionResult, ProviderError, execute_plan
+from core.routing import (
+    Complexity,
+    Privacy,
+    Provider,
+    RequestContext,
+    plan_route,
+)
+from features.email import Email, render_email_summary, summarize_email
+from features.memory import MemoryUpdate, render_memory_update
 
 
 @dataclass(frozen=True)
@@ -34,7 +40,13 @@ def handle_message(
     # A private session is local before classification, until the user starts /new.
     if state.private or state.email is not None:
         context = replace(context, privacy=Privacy.SENSITIVE)
+    # Lock privacy before processing: a failed private request must not reopen GPT
+    # classification for the user's next message. Ingress persists this on failure.
+    if plan_route(context).primary is Provider.LOCAL:
+        state.private = True
     intent = identify_task(message, classifiers, context=context)
+    if plan_route(intent.context).primary is Provider.LOCAL:
+        state.private = True
     follow_up = intent.task is TaskType.FOLLOW_UP
     if follow_up and not state.turns:
         return AssistantReply(
@@ -48,14 +60,10 @@ def handle_message(
     def finish(
         text: str, result: ExecutionResult | None = None, email: Email | None = None
     ) -> AssistantReply:
-        # Local execution may read private USER.md, even after a public-route fallback.
-        private = plan_route(intent.context).primary is Provider.LOCAL or (
-            result is not None and result.provider is Provider.LOCAL
-        )
         state.record(
             message,
             text,
-            private=private,
+            private=state.private,
             complexity=intent.context.complexity,
             email=email,
         )
@@ -73,7 +81,17 @@ def handle_message(
             "本次没有执行外部操作的工具。用户请求和上下文（JSON）：\n"
             + json.dumps(data, ensure_ascii=False)
         )
-        result = execute_plan(plan_route(intent.context), prompt, providers)
+        execution_providers = dict(providers)
+        if Provider.LOCAL in providers:
+
+            def call_local(prompt: str) -> str:
+                # A fallback can read USER.md before failing. Mark only when the
+                # Local business call actually starts, not for a possible fallback.
+                state.private = True
+                return providers[Provider.LOCAL](prompt)
+
+            execution_providers[Provider.LOCAL] = call_local
+        result = execute_plan(plan_route(intent.context), prompt, execution_providers)
         return finish(result.text, result)
 
     if intent.task is TaskType.MEMORY_UPDATE:

@@ -5,24 +5,24 @@ import fcntl
 import os
 from pathlib import Path
 
-from hybrid_assistant.assistant import handle_message
-from hybrid_assistant.conversation import (
-    Conversation,
-    ConversationError,
-    load_conversation,
-    save_conversation,
-)
-from hybrid_assistant.gmail import load_gmail_credentials, read_gmail_email
-from hybrid_assistant.memory import update_user_memory
-from hybrid_assistant.messaging import DeliveryError, send_message
-from hybrid_assistant.runtime import create_providers
-from hybrid_assistant.telegram import (
+from adapters.gmail import load_gmail_credentials, read_gmail_email
+from adapters.messaging import DeliveryError, send_message
+from adapters.telegram import (
     TelegramError,
     check_polling_available,
     get_updates,
     load_telegram_config,
     reply_to_update,
 )
+from app.assistant import handle_message
+from app.conversation import (
+    Conversation,
+    ConversationError,
+    conversation_session,
+    save_conversation,
+)
+from app.runtime import create_providers
+from features.memory import update_user_memory
 
 
 def save_offset(path: Path, offset: int) -> None:
@@ -32,12 +32,14 @@ def save_offset(path: Path, offset: int) -> None:
     os.replace(temporary, path)
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(
+        prog="hybrid-assistant telegram", description=__doc__
+    )
     parser.add_argument(
         "--once", action="store_true", help="回复一条已授权消息后退出，便于测试"
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     profile = Path.home() / ".hermes/profiles/hw3-local"
     try:
         config = load_telegram_config(profile)
@@ -73,17 +75,16 @@ def main() -> None:
                 save_conversation(conversation_path, Conversation())
 
             def handle(text, context):
-                conversation = load_conversation(conversation_path)
-                reply = handle_message(
-                    text,
-                    providers,
-                    classifiers=classifiers,
-                    context=context,
-                    read_latest_email=read_latest_email,
-                    update_memory=update_user_memory,
-                    conversation=conversation,
-                )
-                save_conversation(conversation_path, conversation)
+                with conversation_session(conversation_path) as conversation:
+                    reply = handle_message(
+                        text,
+                        providers,
+                        classifiers=classifiers,
+                        context=context,
+                        read_latest_email=read_latest_email,
+                        update_memory=update_user_memory,
+                        conversation=conversation,
+                    )
                 execution = (
                     reply.execution.provider.value if reply.execution else "none"
                 )

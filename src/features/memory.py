@@ -7,8 +7,8 @@ from dataclasses import dataclass
 from difflib import unified_diff
 from pathlib import Path
 
-from .execution import ProviderError
-from .hermes import call_hermes
+from adapters.hermes import call_hermes
+from core.execution import ProviderError
 
 ENTRY_SEPARATOR = "\n§\n"
 USER_MEMORY_LIMIT = 1375  # Matches the installed Hermes default USER.md budget.

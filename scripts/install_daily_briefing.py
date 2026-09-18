@@ -21,8 +21,8 @@ def main() -> None:
         "set -euo pipefail\n"
         f"cd {shlex.quote(str(PROJECT))}\n"
         "systemctl --user start hw3-ollama\n"
-        f"exec {shlex.quote(str(PROJECT / '.venv/bin/python'))} "
-        f"{shlex.quote(str(PROJECT / 'examples/gmail_summary.py'))} "
+        f"exec {shlex.quote(str(PROJECT / '.venv/bin/hybrid-assistant'))} "
+        "gmail "
         "--daily --send --quiet\n"
     )
     if (

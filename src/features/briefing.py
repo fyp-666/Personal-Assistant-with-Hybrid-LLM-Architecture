@@ -3,10 +3,10 @@
 from collections.abc import Callable, Mapping
 from datetime import UTC, tzinfo
 
-from .calendar import CalendarEvent, build_calendar_briefing
-from .email import Email, render_email_summary, summarize_email
-from .execution import ProviderError
-from .routing import Provider
+from core.execution import ProviderError
+from core.routing import Provider
+from features.calendar import CalendarEvent, build_calendar_briefing
+from features.email import Email, render_email_summary, summarize_email
 
 
 def build_daily_briefing(

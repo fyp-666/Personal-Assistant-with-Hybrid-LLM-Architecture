@@ -2,14 +2,16 @@
 
 import argparse
 
-from hybrid_assistant.execution import ProviderError
-from hybrid_assistant.memory import render_memory_update, update_user_memory
+from core.execution import ProviderError
+from features.memory import render_memory_update, update_user_memory
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(
+        prog="hybrid-assistant memory", description=__doc__
+    )
     parser.add_argument("request", help="你希望助手记住、修改或忘记的用户偏好")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     try:
         result = update_user_memory(args.request)
     except ProviderError as error:

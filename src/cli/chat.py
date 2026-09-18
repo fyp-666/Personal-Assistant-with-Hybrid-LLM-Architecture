@@ -3,19 +3,23 @@
 import argparse
 from pathlib import Path
 
-from hybrid_assistant.assistant import handle_message
-from hybrid_assistant.conversation import (
+from adapters.gmail import (
+    GmailError,
+    load_gmail_credentials,
+    read_gmail_email,
+)
+from app.assistant import handle_message
+from app.conversation import (
     Conversation,
     ConversationError,
-    load_conversation,
+    conversation_session,
     save_conversation,
 )
-from hybrid_assistant.email import Email
-from hybrid_assistant.execution import ProviderError
-from hybrid_assistant.gmail import GmailError, load_gmail_credentials, read_gmail_email
-from hybrid_assistant.memory import update_user_memory
-from hybrid_assistant.routing import Privacy, RequestContext, Source
-from hybrid_assistant.runtime import create_providers
+from app.runtime import create_providers
+from core.execution import ProviderError
+from core.routing import Privacy, RequestContext, Source
+from features.email import Email
+from features.memory import update_user_memory
 
 
 def read_latest_email() -> Email | None:
@@ -23,8 +27,8 @@ def read_latest_email() -> Email | None:
     return read_gmail_email(address, password)
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(prog="hybrid-assistant chat", description=__doc__)
     parser.add_argument(
         "message", help="允许发给 GPT 的当前请求；私人内容请加 --private"
     )
@@ -37,7 +41,7 @@ def main() -> None:
     parser.add_argument(
         "--new", action="store_true", help="清空近期上下文后处理这条消息，保留长期偏好"
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     context = RequestContext(
         privacy=Privacy.SENSITIVE if args.private else Privacy.PUBLIC,
         source=Source.USER_INPUT,
@@ -47,18 +51,22 @@ def main() -> None:
     try:
         if args.new:
             save_conversation(path, Conversation())
-        conversation = load_conversation(path)
-        reply = handle_message(
-            args.message,
-            create_providers(),
-            classifiers=create_providers(load_local_context=False),
-            context=context,
-            read_latest_email=read_latest_email,
-            update_memory=update_user_memory,
-            conversation=conversation,
+        with conversation_session(path) as conversation:
+            reply = handle_message(
+                args.message,
+                create_providers(),
+                classifiers=create_providers(load_local_context=False),
+                context=context,
+                read_latest_email=read_latest_email,
+                update_memory=update_user_memory,
+                conversation=conversation,
+            )
+    except ConversationError as error:
+        parser.exit(
+            1,
+            f"{error}\n本轮业务可能已执行，长期记忆修改也可能已保存。隐私状态可能未保存；修复会话文件前请继续使用 --private。\n",
         )
-        save_conversation(path, conversation)
-    except (ProviderError, GmailError, ConversationError) as error:
+    except (ProviderError, GmailError) as error:
         parser.exit(1, f"请求失败：{error}\n")
     except ValueError as error:
         parser.error(str(error))

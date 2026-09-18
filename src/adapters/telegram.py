@@ -8,10 +8,11 @@ from pathlib import Path
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
-from .conversation import ConversationError
-from .execution import ProviderError
-from .gmail import GmailError
-from .routing import Privacy, RequestContext, Source
+from adapters.gmail import GmailError
+from adapters.messaging import MessageContentError
+from app.conversation import ConversationError
+from core.execution import ProviderError
+from core.routing import Privacy, RequestContext, Source
 
 
 class TelegramError(RuntimeError):
@@ -150,10 +151,23 @@ def reply_to_update(
         try:
             answer = handle(request, context)
         except ConversationError:
-            answer = "近期对话文件读写失败。本轮业务可能已执行，长期记忆修改也可能已保存；请检查后再重试，或用 /new 重置近期对话。"
+            # Continuing could reload an old public state after a private save failed.
+            # This fixed notice has no content directives; uncertain sends propagate.
+            send(
+                "近期对话文件读写失败。本轮业务可能已执行，长期记忆修改也可能已保存；"
+                "会话隐私状态可能未保存，接收器将停止。请修复本地存储后重启；继续私人话题时请明确使用 /private。"
+            )
+            raise
         except (ProviderError, GmailError):
             answer = (
                 "本次请求处理失败，模型、邮箱或本地会话暂不可用。请稍后重新发送请求。"
             )
-    send(answer)
+    try:
+        send(answer)
+    except MessageContentError:
+        # The original text never reached Hermes. A fixed notice is safe to send;
+        # uncertain transport failures still propagate without a retry.
+        send(
+            "本轮回复内容无法通过纯文本发送检查，已阻止发送。请换一种方式提问；接收器会继续运行。"
+        )
     return True

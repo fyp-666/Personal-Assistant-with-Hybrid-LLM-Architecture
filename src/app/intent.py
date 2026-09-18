@@ -5,8 +5,15 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from enum import Enum
 
-from .execution import ProviderError, execute_plan
-from .routing import Complexity, Privacy, Provider, RequestContext, Source, plan_route
+from core.execution import ProviderError, execute_plan
+from core.routing import (
+    Complexity,
+    Privacy,
+    Provider,
+    RequestContext,
+    Source,
+    plan_route,
+)
 
 
 class TaskType(Enum):

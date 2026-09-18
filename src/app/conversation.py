@@ -3,11 +3,13 @@
 import json
 import os
 import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from .email import Email
-from .routing import Complexity
+from core.routing import Complexity
+from features.email import Email
 
 MAX_TURNS = 6
 HISTORY_CHARS = 12000
@@ -16,6 +18,22 @@ EMAIL_CHARS = 16000
 
 class ConversationError(RuntimeError):
     """Conversation state could not be safely loaded or saved."""
+
+
+@contextmanager
+def conversation_session(path: Path) -> Iterator["Conversation"]:
+    """Persist successful turns and privacy restrictions even when a turn fails."""
+    state = load_conversation(path)
+    was_private = state.private
+    try:
+        yield state
+    except BaseException:
+        # Failed requests add no turn, but must not reopen the cloud boundary.
+        if state.private and not was_private:
+            save_conversation(path, state)
+        raise
+    else:
+        save_conversation(path, state)
 
 
 @dataclass

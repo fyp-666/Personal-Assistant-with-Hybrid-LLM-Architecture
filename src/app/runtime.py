@@ -4,8 +4,8 @@ from collections.abc import Callable
 from functools import partial
 from pathlib import Path
 
-from .hermes import call_hermes
-from .routing import Provider
+from adapters.hermes import call_hermes
+from core.routing import Provider
 
 
 def create_providers(

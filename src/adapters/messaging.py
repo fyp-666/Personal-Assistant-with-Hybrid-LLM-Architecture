@@ -9,12 +9,16 @@ class DeliveryError(RuntimeError):
     """Delivery failed or its outcome could not be confirmed."""
 
 
+class MessageContentError(DeliveryError):
+    """Text was rejected locally before any delivery attempt."""
+
+
 def send_message(text: str, *, target: str) -> None:
     """Send once to a caller-selected target using the private Hermes profile."""
     if not text.strip():
-        raise DeliveryError("不能发送空消息。")
+        raise MessageContentError("不能发送空消息。")
     if "MEDIA:" in text.upper():
-        raise DeliveryError("摘要含有 Hermes 附件标记；本入口只发送文本。")
+        raise MessageContentError("摘要含有 Hermes 附件标记；本入口只发送文本。")
     profile = Path.home() / ".hermes/profiles/hw3-local"
     env = {
         key: os.environ[key]

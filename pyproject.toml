@@ -10,6 +10,9 @@ readme = "README.md"
 requires-python = ">=3.11,<3.12"
 dependencies = []
 
+[project.scripts]
+hybrid-assistant = "cli:main"
+
 [dependency-groups]
 dev = [
     "pytest>=8,<10",
@@ -17,7 +20,7 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/hybrid_assistant"]
+packages = ["src/core", "src/app", "src/features", "src/adapters", "src/cli"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

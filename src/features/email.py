@@ -4,8 +4,14 @@ import json
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 
-from .execution import ExecutionResult, execute_plan
-from .routing import Privacy, Provider, RequestContext, Source, plan_route
+from core.execution import ExecutionResult, execute_plan
+from core.routing import (
+    Privacy,
+    Provider,
+    RequestContext,
+    Source,
+    plan_route,
+)
 
 
 @dataclass(frozen=True)
