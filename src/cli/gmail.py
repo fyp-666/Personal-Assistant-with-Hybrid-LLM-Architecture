@@ -1,4 +1,4 @@
-"""Read selected Gmail messages and summarize them with local Gemma in WSL."""
+"""Read selected Gmail messages and summarize them through the configured GPT/Local route in WSL."""
 
 import argparse
 from datetime import UTC, datetime, timedelta

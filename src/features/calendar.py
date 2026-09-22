@@ -7,7 +7,6 @@ from datetime import UTC, date, datetime, timedelta, tzinfo
 
 from core.execution import ExecutionResult, ProviderError, execute_plan
 from core.routing import (
-    Privacy,
     Provider,
     RequestContext,
     Source,
@@ -76,8 +75,8 @@ def summarize_calendar(
     *,
     timezone: tzinfo = UTC,
 ) -> ExecutionResult:
-    """Summarize selected events in one private call; never fall back remotely."""
-    plan = plan_route(RequestContext(privacy=Privacy.SENSITIVE, source=Source.CALENDAR))
+    """Summarize selected events in one GPT call, with Local fallback."""
+    plan = plan_route(RequestContext(source=Source.CALENDAR))
     ordered = sorted(events, key=lambda event: event.starts_at.astimezone(UTC))
     records = [
         {
@@ -108,7 +107,7 @@ def build_calendar_briefing(
     *,
     timezone: tzinfo = UTC,
 ) -> str:
-    """Combine source details with a local summary or an explicit failure notice."""
+    """Combine source details with a model summary or an explicit failure notice."""
     facts = render_calendar_briefing(events)
     if not events:
         return facts

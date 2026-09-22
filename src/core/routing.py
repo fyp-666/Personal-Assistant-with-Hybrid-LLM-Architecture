@@ -77,45 +77,6 @@ def plan_route(context: RequestContext) -> RoutePlan:
             reason="cloud_forbidden",
         )
 
-    # Sensitive sources take precedence over a claimed public privacy label.
-    if context.source in (Source.EMAIL, Source.CALENDAR):
-        return RoutePlan(
-            primary=Provider.LOCAL,
-            fallbacks=(),
-            reason="sensitive_source",
-        )
-
-    if context.privacy is Privacy.PUBLIC and context.source is Source.USER_INPUT:
-        # Complexity selects a provider only after cloud access is permitted.
-        if context.complexity is Complexity.COMPLEX:
-            return RoutePlan(
-                primary=Provider.NIM,
-                fallbacks=(Provider.LOCAL,),
-                reason="complex_request",
-            )
-
-        return RoutePlan(
-            primary=Provider.OPENAI,
-            fallbacks=(Provider.LOCAL,),
-            reason="public_request",
-        )
-
     if context.privacy is Privacy.SENSITIVE:
-        return RoutePlan(
-            primary=Provider.LOCAL,
-            fallbacks=(),
-            reason="sensitive_request",
-        )
-
-    if context.privacy is Privacy.PUBLIC:
-        return RoutePlan(
-            primary=Provider.LOCAL,
-            fallbacks=(),
-            reason="source_unconfirmed",
-        )
-
-    return RoutePlan(
-        primary=Provider.LOCAL,
-        fallbacks=(),
-        reason="privacy_unconfirmed",
-    )
+        return RoutePlan(Provider.LOCAL, (), "explicit_private")
+    return RoutePlan(Provider.OPENAI, (Provider.LOCAL,), "default_gpt")

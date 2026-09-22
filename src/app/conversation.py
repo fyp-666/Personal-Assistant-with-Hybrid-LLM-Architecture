@@ -9,6 +9,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from core.routing import Complexity
+from features.calendar_actions import MAX_CALENDAR_RESULTS, CalendarItem, CalendarResult
 from features.email import MAX_EMAIL_RESULTS, Email, EmailQuery, EmailSearchResult
 
 MAX_TURNS = 6
@@ -84,6 +85,20 @@ class Conversation:
     private: bool = False
     email_result: EmailSearchResult | None = None
     complexity: Complexity = Complexity.NORMAL
+    calendar_result: CalendarResult | None = None
+    calendar_items: list[CalendarItem] = field(default_factory=list)
+
+    def __post_init__(self):
+        if not self.calendar_items and self.calendar_result is not None:
+            self.calendar_items = list(self.calendar_result.items)
+        if (
+            not isinstance(self.calendar_items, list)
+            or len(self.calendar_items) > MAX_CALENDAR_RESULTS
+            or any(not isinstance(item, CalendarItem) for item in self.calendar_items)
+            or len({item.event_id for item in self.calendar_items})
+            != len(self.calendar_items)
+        ):
+            raise ValueError("无效的日历上下文。")
 
     def record(
         self,
@@ -93,9 +108,30 @@ class Conversation:
         private: bool,
         complexity: Complexity,
         email_result: EmailSearchResult | None = None,
+        calendar_result: CalendarResult | None = None,
     ) -> None:
         bounded = bound_email_result(email_result) if email_result is not None else None
-        self.private = self.private or private or bounded is not None
+        calendar = (
+            CalendarResult.from_dict(calendar_result.to_dict())
+            if calendar_result is not None
+            else None
+        )
+        self.private = self.private or private
+        if calendar is not None:
+            if (
+                calendar.operation == "query"
+                or self.calendar_result is None
+                or self.calendar_result.source_label != calendar.source_label
+            ):
+                # A new query (including empty) or source replaces the working set.
+                self.calendar_items = list(calendar.items)
+            else:
+                # Keep the latest receipt separate from other known target records.
+                known = {item.event_id: item for item in self.calendar_items}
+                for item in calendar.items:
+                    known[item.event_id] = item
+                self.calendar_items = list(known.values())[-MAX_CALENDAR_RESULTS:]
+            self.calendar_result = calendar
         self.complexity = complexity
         if bounded is not None:
             # An empty result is still the current query; never reuse older mail.
@@ -129,6 +165,13 @@ class Conversation:
                 ],
                 "has_more": self.email_result.has_more,
             }
+        if self.calendar_result is not None:
+            data["calendar_result"] = {
+                **self.calendar_result.to_dict(),
+                "items": [item.model_data() for item in self.calendar_result.items],
+            }
+        if self.calendar_items:
+            data["calendar_items"] = [item.model_data() for item in self.calendar_items]
         return data
 
 
@@ -173,6 +216,70 @@ def _result_from_dict(data: object) -> EmailSearchResult | None:
 def load_conversation(path: Path) -> Conversation:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict) or type(data.get("private")) is not bool:
+            raise ValueError("Invalid conversation privacy flag")
+        if (
+            isinstance(data, dict)
+            and type(data.get("version")) is int
+            and data["version"] == 2
+        ):
+            if set(data) != {
+                "version",
+                "turns",
+                "private",
+                "email_result",
+                "complexity",
+            }:
+                raise ValueError("Invalid version 2 conversation")
+            data = {
+                **data,
+                "version": 3,
+                "calendar_result": None,
+                "private": data["private"] or data["email_result"] is not None,
+            }
+        if (
+            isinstance(data, dict)
+            and type(data.get("version")) is int
+            and data["version"] == 3
+        ):
+            if set(data) != {
+                "version",
+                "turns",
+                "private",
+                "email_result",
+                "calendar_result",
+                "complexity",
+            }:
+                raise ValueError("Invalid version 3 conversation")
+            snapshot = data["calendar_result"]
+            data = {
+                **data,
+                "version": 4,
+                "calendar_items": snapshot["items"] if snapshot is not None else [],
+            }
+        if (
+            isinstance(data, dict)
+            and type(data.get("version")) is int
+            and data["version"] == 4
+        ):
+            expected = {
+                "version",
+                "turns",
+                "private",
+                "email_result",
+                "calendar_result",
+                "calendar_items",
+                "complexity",
+            }
+            if set(data) != expected:
+                raise ValueError("Invalid version 4 conversation")
+            data = {
+                **data,
+                "version": 5,
+                "private": data["private"]
+                or data["email_result"] is not None
+                or data["calendar_result"] is not None,
+            }
         legacy = isinstance(data, dict) and set(data) == {
             "turns",
             "private",
@@ -185,9 +292,17 @@ def load_conversation(path: Path) -> Conversation:
                 not legacy
                 and (
                     set(data)
-                    != {"version", "turns", "private", "email_result", "complexity"}
+                    != {
+                        "version",
+                        "turns",
+                        "private",
+                        "email_result",
+                        "calendar_result",
+                        "calendar_items",
+                        "complexity",
+                    }
                     or type(data["version"]) is not int
-                    or data["version"] != 2
+                    or data["version"] != 5
                 )
             )
             or type(data["private"]) is not bool
@@ -221,11 +336,22 @@ def load_conversation(path: Path) -> Conversation:
             )
         else:
             email_result = _result_from_dict(data["email_result"])
+        calendar_result = (
+            CalendarResult.from_dict(data["calendar_result"])
+            if not legacy and data["calendar_result"] is not None
+            else None
+        )
+        raw_items = [] if legacy else data["calendar_items"]
+        if not isinstance(raw_items, list):
+            raise TypeError("Invalid calendar context")
+        calendar_items = [CalendarItem.from_dict(item) for item in raw_items]
         return Conversation(
             turns,
-            data["private"] or email_result is not None,
+            data["private"] or (legacy and email_result is not None),
             email_result,
             Complexity(data["complexity"]),
+            calendar_result,
+            calendar_items,
         )
     except FileNotFoundError:
         return Conversation()
@@ -241,9 +367,9 @@ def save_conversation(path: Path, conversation: Conversation) -> None:
         path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         result = conversation.email_result
         data = {
-            "version": 2,
+            "version": 5,
             "turns": conversation.turns,
-            "private": conversation.private or result is not None,
+            "private": conversation.private,
             "email_result": (
                 {
                     "query": result.query.to_dict(),
@@ -253,6 +379,12 @@ def save_conversation(path: Path, conversation: Conversation) -> None:
                 if result is not None
                 else None
             ),
+            "calendar_result": (
+                conversation.calendar_result.to_dict()
+                if conversation.calendar_result is not None
+                else None
+            ),
+            "calendar_items": [asdict(item) for item in conversation.calendar_items],
             "complexity": conversation.complexity.value,
         }
         with tempfile.NamedTemporaryFile(

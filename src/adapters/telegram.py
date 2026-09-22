@@ -13,6 +13,7 @@ from adapters.messaging import MessageContentError
 from app.conversation import ConversationError
 from core.execution import ProviderError
 from core.routing import Privacy, RequestContext, Source
+from features.calendar_actions import CalendarError
 
 
 class TelegramError(RuntimeError):
@@ -129,20 +130,18 @@ def reply_to_update(
         answer = "目前只支持文字请求，暂不处理图片、语音或附件。"
     elif command == "/new" and reset is not None:
         reset()
-        answer = "已开始新会话，近期对话和邮件快照已清空，长期偏好保留。"
+        answer = "已开始新会话，近期对话和邮件、日历快照已清空，长期偏好保留，已保存日程不变。"
     elif command in {"/start", "/help"}:
         answer = (
-            "可以聊天、按日期或主题查询邮件（每次最多10封），或明确要求记住、修改、忘记长期偏好。会结合近期对话和已查询邮件理解你的消息；/new 开始新会话，长期偏好保留。"
-            "公共消息和公共近期对话可交给 GPT 理解请求；私人内容请用 /private 你的问题，全程使用 Gemma。含私人资料的会话会继续留在本地，直到 /new。"
+            "可以聊天、按日期或主题查询邮件（每次最多10封），查询、创建、修改或取消本地日程，或更新长期偏好。会结合近期对话和已查询邮件理解你的消息；/new 开始新会话，长期偏好保留。"
+            "默认使用 GPT 理解和回答，可使用近期对话、邮件及日历资料；连接失败时回退 Local。需要仅本地处理请用 /private 你的问题，之后保持本地直到 /new。"
         )
     elif text.startswith("/") and command != "/private":
         answer = "未知命令。可直接发送文字问题，或用 /private 你的问题。"
     elif command == "/private" and not rest.strip():
         answer = "请在 /private 后面填写需要本地处理的问题。"
     else:
-        private = command == "/private" or any(
-            key in message for key in ("reply_to_message", "external_reply", "quote")
-        )
+        private = command == "/private"
         request = rest.strip() if command == "/private" else text
         context = RequestContext(
             privacy=Privacy.SENSITIVE if private else Privacy.PUBLIC,
@@ -158,7 +157,7 @@ def reply_to_update(
                 "会话隐私状态可能未保存，接收器将停止。请修复本地存储后重启；继续私人话题时请明确使用 /private。"
             )
             raise
-        except (ProviderError, GmailError):
+        except (ProviderError, GmailError, CalendarError):
             answer = (
                 "本次请求处理失败，模型、邮箱或本地会话暂不可用。请稍后重新发送请求。"
             )

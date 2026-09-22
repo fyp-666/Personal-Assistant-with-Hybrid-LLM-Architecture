@@ -11,9 +11,10 @@ from app.conversation import (
     conversation_session,
     save_conversation,
 )
-from app.runtime import create_providers
+from app.runtime import create_providers, manage_calendar
 from core.execution import ProviderError
 from core.routing import Privacy, RequestContext, Source
+from features.calendar_actions import CalendarError
 from features.memory import update_user_memory
 
 
@@ -26,7 +27,9 @@ def main(argv: list[str] | None = None) -> None:
         "--private", action="store_true", help="输入含私人内容，仅使用本地模型"
     )
     parser.add_argument(
-        "--offline", action="store_true", help="仅使用本地模型，不连接 Gmail"
+        "--offline",
+        action="store_true",
+        help="仅使用本地模型，不连接 Gmail 或 Google 日历",
     )
     parser.add_argument(
         "--new", action="store_true", help="清空近期上下文后处理这条消息，保留长期偏好"
@@ -49,6 +52,9 @@ def main(argv: list[str] | None = None) -> None:
                 context=context,
                 read_emails=query_gmail,
                 update_memory=update_user_memory,
+                manage_calendar=lambda request: manage_calendar(
+                    request, offline=context.offline
+                ),
                 conversation=conversation,
             )
     except ConversationError as error:
@@ -56,7 +62,7 @@ def main(argv: list[str] | None = None) -> None:
             1,
             f"{error}\n本轮业务可能已执行，长期记忆修改也可能已保存。隐私状态可能未保存；修复会话文件前请继续使用 --private。\n",
         )
-    except (ProviderError, GmailError) as error:
+    except (ProviderError, GmailError, CalendarError) as error:
         parser.exit(1, f"请求失败：{error}\n")
     except ValueError as error:
         parser.error(str(error))

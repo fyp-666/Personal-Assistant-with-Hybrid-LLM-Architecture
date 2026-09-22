@@ -14,7 +14,7 @@ def main(argv: list[str] | None = None) -> None:
         ("telegram", "接收已绑定 Telegram 私聊"),
         ("gmail", "读取并摘要 Gmail，可选批量、日报和推送"),
         ("memory", "明确记住、修改或忘记长期偏好"),
-        ("calendar", "读取本地日历文件并生成指定日期的简报"),
+        ("calendar", "Google 日历授权、本地简报和到期提醒"),
     ):
         commands.add_parser(name, help=description, add_help=False)
     args, remaining = parser.parse_known_args(argv)

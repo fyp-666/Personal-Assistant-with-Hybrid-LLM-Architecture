@@ -1,4 +1,4 @@
-"""Combine selected calendar events and private email summaries."""
+"""Combine selected calendar events and email summaries."""
 
 from collections.abc import Callable, Mapping
 from datetime import UTC, tzinfo

@@ -1,4 +1,4 @@
-"""Describe bounded email searches and summarize messages through the private route."""
+"""Describe bounded email searches and summarize messages through the configured model route."""
 
 import json
 import re
@@ -9,7 +9,6 @@ from zoneinfo import ZoneInfo
 
 from core.execution import ExecutionResult, ProviderError, execute_plan
 from core.routing import (
-    Privacy,
     Provider,
     RequestContext,
     Source,
@@ -140,7 +139,7 @@ def summarize_email(
     """Summarize email content locally; local failure must remain a failure."""
     if not email.body.strip():
         raise ProviderError("这封邮件没有可摘要的文本正文，图片或附件内容尚未解析。")
-    plan = plan_route(RequestContext(privacy=Privacy.SENSITIVE, source=Source.EMAIL))
+    plan = plan_route(RequestContext(source=Source.EMAIL))
     prompt = (
         "请概括邮件的主要事项和需要采取的行动。"
         "语言和排版优先采用用户档案中与邮件摘要有关的偏好；"

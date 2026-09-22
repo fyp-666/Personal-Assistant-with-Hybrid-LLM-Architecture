@@ -222,3 +222,10 @@ __marimo__/
 
 # Keep the automated test suite local; do not publish it.
 /tests/
+
+
+/docs/
+
+# Local Google OAuth client configuration; never publish credentials.
+/json/
+client_secret*.json

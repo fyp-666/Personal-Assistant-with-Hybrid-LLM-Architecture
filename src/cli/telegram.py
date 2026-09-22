@@ -21,7 +21,7 @@ from app.conversation import (
     conversation_session,
     save_conversation,
 )
-from app.runtime import create_providers
+from app.runtime import create_providers, manage_calendar
 from features.memory import update_user_memory
 
 
@@ -80,6 +80,9 @@ def main(argv: list[str] | None = None) -> None:
                         context=context,
                         read_emails=query_gmail,
                         update_memory=update_user_memory,
+                        manage_calendar=lambda request: manage_calendar(
+                            request, offline=context.offline
+                        ),
                         conversation=conversation,
                     )
                 execution = (

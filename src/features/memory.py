@@ -1,14 +1,17 @@
-"""Apply identified preference updates locally to Hermes USER.md."""
+"""Apply identified preference updates to a local Hermes USER.md file."""
 
 import json
 import os
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from difflib import unified_diff
+from functools import partial
 from pathlib import Path
 
 from adapters.hermes import call_hermes
-from core.execution import ProviderError
+from core.execution import ProviderError, execute_plan
+from core.routing import Provider, RequestContext, plan_route
 
 ENTRY_SEPARATOR = "\n§\n"
 USER_MEMORY_LIMIT = 1375  # Matches the installed Hermes default USER.md budget.
@@ -151,8 +154,13 @@ def _save_user_memory(path: Path, before: str, after: str) -> None:
                 temporary.unlink(missing_ok=True)
 
 
-def update_user_memory(request: str, *, profile: Path | None = None) -> MemoryUpdate:
-    """Apply a preference statement or edit; injected profiles must be local."""
+def update_user_memory(
+    request: str,
+    *,
+    profile: Path | None = None,
+    generate: Callable[[str], str] | None = None,
+) -> MemoryUpdate:
+    """Validate a model proposal and commit it to the local preference file."""
     if not request.strip():
         raise ValueError("请提供要记住、修改或删除的偏好。")
     if profile is None:
@@ -184,7 +192,16 @@ def update_user_memory(request: str, *, profile: Path | None = None) -> MemoryUp
         )
     )
     # The profile has no tools. Extraction is a text call, with no model-side writes.
-    reply = call_hermes(prompt, profile=profile)
+    if generate is None:
+        providers = {
+            Provider.OPENAI: partial(
+                call_hermes, profile=profile.parent / "hw3-openai"
+            ),
+            Provider.LOCAL: partial(call_hermes, profile=profile),
+        }
+        reply = execute_plan(plan_route(RequestContext()), prompt, providers).text
+    else:
+        reply = generate(prompt)
     after = _apply_edits(before, reply)
     if after != before:
         _save_user_memory(path, before, after)
