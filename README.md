@@ -40,7 +40,7 @@ For a new machine, install Hermes separately, create the project environment wit
 | `calendar reminders --send` | Send one due batch to the bound Telegram chat |
 | `calendar reminders --send --watch` | Keep checking every 30 seconds in the foreground |
 | `calendar reminders --status` | Inspect reminder delivery status counts |
-| `memory "request"` | Add, change or remove a persistent preference with Local Gemma |
+| `memory "request"` | Add, change or remove a persistent preference; GPT by default, `--private` for Local |
 | `calendar config/calendar.example.json` | Summarize selected events from a local JSON file |
 
 Prefix each command with `hybrid-assistant`. From the repository root, `python src/main.py` provides the same subcommands. Use a subcommand's `--help` for its options. Gmail previews by default; `--send` delivers to Telegram. `--quiet` requires `--send` and hides summary content from command output.
@@ -75,6 +75,10 @@ The `memory` command and recognized long-term preferences in chat **change the r
 Every request receives the bounded conversation context. Email/calendar data does not itself force Local, and complexity no longer automatically selects NIM. The NIM adapter remains available but is outside the default route. Classifiers never load profile files implicitly. Answer providers read saved user preferences; model output cannot loosen explicit privacy restrictions.
 
 CLI and Telegram keep separate recent conversations. Explicit private requests lock their conversation to Local until chat --new or Telegram /new. Availability fallback does not set this lock. Older conversation files preserve their previous privacy lock during migration; start a new conversation to use the new default. Resetting a conversation preserves saved events and long-term preferences.
+
+Chat and Telegram share one response pipeline: request understanding, an optional memory update, at most one business tool operation, and a final model answer. Calendar queries and writes now pass their actual result to the same answer stage as email and ordinary chat; empty results and tool errors also reach that stage. Normally this means two model calls, plus one optional memory extraction call. Timed reminder delivery and standalone CLI result rendering do not add an answer-model call.
+
+The answer receives an explicit current-tool outcome: completed, not executed, or unconfirmed. Current results are distinguished from historical snapshots; an unconfirmed write must not be described as successful or automatically retried. If all permitted answer providers fail, the application displays the actual tool receipt/error and still saves confirmed results and new event versions for follow-up. Email source headers and memory diffs remain program-rendered. Calendar replies use natural language; raw identifiers remain available internally and in fallback receipts. Generated wording can still be wrong and is not independently reviewed by another model.
 
 Each conversation retains its latest email query and numbered results. Calendar context keeps up to ten known records, updating individual IDs/versions after a mutation, alongside the last operation receipt. A new calendar query replaces this working set, including an empty query. These are contextual snapshots; writes still verify the current source version.
 
