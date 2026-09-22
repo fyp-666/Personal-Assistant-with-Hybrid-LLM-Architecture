@@ -5,7 +5,7 @@ import fcntl
 import os
 from pathlib import Path
 
-from adapters.gmail import load_gmail_credentials, read_gmail_email
+from adapters.gmail import query_gmail
 from adapters.messaging import DeliveryError, send_message
 from adapters.telegram import (
     TelegramError,
@@ -64,9 +64,6 @@ def main(argv: list[str] | None = None) -> None:
             classifiers = create_providers(load_local_context=False)
             providers = create_providers()
 
-            def read_latest_email():
-                return read_gmail_email(*load_gmail_credentials())
-
             conversation_path = (
                 profile / "conversations" / f"telegram-{config.chat_id}.json"
             )
@@ -81,7 +78,7 @@ def main(argv: list[str] | None = None) -> None:
                         providers,
                         classifiers=classifiers,
                         context=context,
-                        read_latest_email=read_latest_email,
+                        read_emails=query_gmail,
                         update_memory=update_user_memory,
                         conversation=conversation,
                     )

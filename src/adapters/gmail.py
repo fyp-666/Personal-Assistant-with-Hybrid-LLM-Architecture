@@ -10,7 +10,7 @@ from email.parser import BytesParser
 from html.parser import HTMLParser
 from pathlib import Path
 
-from features.email import Email
+from features.email import Email, EmailQuery, EmailSearchResult
 
 
 class GmailError(RuntimeError):
@@ -58,18 +58,19 @@ def parse_email(raw: bytes) -> Email:
     """Decode MIME headers/body, preferring plain text and ignoring attachments."""
     message = BytesParser(policy=policy.default).parsebytes(raw)
     part = message.get_body(preferencelist=("plain", "html"))
-    if part is None:
-        raise GmailError("邮件中没有可摘要的文本正文。")
-    try:
-        body = part.get_content()
-    except (LookupError, UnicodeError):
-        raise GmailError("无法解码这封邮件的正文。") from None
-    if part.get_content_type() == "text/html":
-        parser = _HTMLText()
-        parser.feed(body)
-        body = "".join(parser.parts)
-    if not body.strip():
-        raise GmailError("邮件中没有可摘要的文本正文。")
+    # A bodyless/image-only message is still a matching mailbox result.
+    # Preserve its headers and position; an empty body explicitly means that
+    # there is no text available to summarize, not that fetching failed.
+    body = ""
+    if part is not None:
+        try:
+            body = part.get_content()
+        except (LookupError, UnicodeError):
+            raise GmailError("无法解码这封邮件的正文。") from None
+        if part.get_content_type() == "text/html":
+            parser = _HTMLText()
+            parser.feed(body)
+            body = "".join(parser.parts)
     return Email(
         sender=str(message.get("From", "")),
         subject=str(message.get("Subject", "")),
@@ -85,6 +86,19 @@ def read_gmail_email(
     return emails[0] if emails else None
 
 
+def query_gmail(query: EmailQuery) -> EmailSearchResult:
+    """Read a bounded INBOX result set, checking one extra match for truncation."""
+    emails, has_more = _read_gmail_emails(
+        *load_gmail_credentials(),
+        subject=query.subject,
+        received_since=query.received_since,
+        received_before=query.received_before,
+        limit=query.limit,
+        check_more=True,
+    )
+    return EmailSearchResult(query=query, emails=emails, has_more=has_more)
+
+
 def read_gmail_emails(
     address: str,
     app_password: str,
@@ -94,7 +108,29 @@ def read_gmail_emails(
     received_since: datetime | None = None,
     received_before: datetime | None = None,
 ) -> list[Email]:
-    """Read matching INBOX messages; None limit means all, within [since, before)."""
+    """Read INBOX in descending UID order, within [since, before); None means all."""
+    emails, _ = _read_gmail_emails(
+        address,
+        app_password,
+        limit=limit,
+        subject=subject,
+        received_since=received_since,
+        received_before=received_before,
+    )
+    return emails
+
+
+def _read_gmail_emails(
+    address: str,
+    app_password: str,
+    *,
+    limit: int | None,
+    subject: str | None,
+    received_since: datetime | None,
+    received_before: datetime | None,
+    check_more: bool = False,
+) -> tuple[list[Email], bool]:
+    """Share filtering and fetching; lookahead needs only a matching UID, not its body."""
     if limit is not None and (type(limit) is not int or limit < 1):
         raise ValueError("limit must be a positive integer or None")
     if (received_since is None) != (received_before is None):
@@ -144,6 +180,8 @@ def read_gmail_emails(
                     received_at = _received_at(data)
                     if not received_since <= received_at < received_before:
                         continue
+                if limit is not None and len(emails) >= limit:
+                    return emails, True
                 status, data = mailbox.uid("fetch", uid, "(BODY.PEEK[])")
                 if status != "OK":
                     raise GmailError("Gmail 邮件读取失败。")
@@ -151,9 +189,9 @@ def read_gmail_emails(
                 if not isinstance(raw, bytes):
                     raise GmailError("Gmail 未返回邮件正文。")
                 emails.append(parse_email(raw))
-                if limit is not None and len(emails) >= limit:
+                if limit is not None and len(emails) >= limit and not check_more:
                     break
-            return emails
+            return emails, False
     except (imaplib.IMAP4.error, OSError):
         raise GmailError("Gmail 连接或登录失败，请检查网络和应用专用密码。") from None
 

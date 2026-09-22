@@ -1,4 +1,4 @@
-"""Extract explicit preference edits locally and persist them in Hermes USER.md."""
+"""Apply identified preference updates locally to Hermes USER.md."""
 
 import json
 import os
@@ -99,9 +99,23 @@ def _apply_edits(before: str, reply: str) -> str:
             else:
                 if entries[index].count(old_text) != 1:
                     raise ValueError("待替换片段在条目中不唯一")
-                content = (
-                    entries[index].replace(old_text, operation["content"], 1).strip()
-                )
+                replacement = operation["content"]
+                # Ignore boundary punctuation only when checking whether a model
+                # accidentally supplied existing context as replacement text.
+                boundary_chars = " \t\r\n，,。.;；：:!?！？"
+                replacement_body = replacement.strip(boundary_chars)
+                if replacement_body == entries[index].strip(boundary_chars):
+                    # A model may supply the complete existing entry for a
+                    # fragment replacement. It is already the requested text.
+                    continue
+                prefix, _, suffix = entries[index].partition(old_text)
+                prefix_body = prefix.strip(boundary_chars)
+                suffix_body = suffix.strip(boundary_chars)
+                if (prefix_body and replacement_body.startswith(prefix_body)) or (
+                    suffix_body and replacement_body.endswith(suffix_body)
+                ):
+                    raise ValueError("局部替换重复包含未修改的前后文，请仅提供替换片段")
+                content = (prefix + replacement + suffix).strip()
                 if not content:
                     raise ValueError("删除整条请使用 remove")
                 entries[index] = content
@@ -138,7 +152,7 @@ def _save_user_memory(path: Path, before: str, after: str) -> None:
 
 
 def update_user_memory(request: str, *, profile: Path | None = None) -> MemoryUpdate:
-    """Apply a direct user request; injected profiles must be trusted and local."""
+    """Apply a preference statement or edit; injected profiles must be local."""
     if not request.strip():
         raise ValueError("请提供要记住、修改或删除的偏好。")
     if profile is None:
@@ -147,15 +161,21 @@ def update_user_memory(request: str, *, profile: Path | None = None) -> MemoryUp
     path = profile / "memories/USER.md"
     before = _read_user_memory(path)
     prompt = (
-        "根据用户亲自提出的请求，提取长期偏好的修改。只输出 JSON，不要代码块或解释。"
+        "将用户表达的长期偏好合并到现有档案，生成最小文本修改。只输出 JSON，不要代码块或解释。"
+        "输入可以是已识别的偏好陈述，也可以是用户直接给出的记住/修改/忘记请求。"
+        "仅处理偏好；本次查询、总结、回答、临时待办等指令不能写入档案。"
         '格式为 {"operations":[...]}。没有需保存的长期信息或偏好已存在时返回空列表。'
         '新增条目：{"action":"add","content":"简短的新偏好陈述"}；'
         '局部修改：{"action":"replace","old_text":"需要改动的原文片段","content":"替换片段"}；'
         '忘记整个条目：{"action":"remove","old_text":"该条目独有的原文片段"}。'
         "old_text 必须从当前档案逐字复制，并唯一匹配；replace 只替换这个片段，"
-        "因此应只提供要改的几个字，不要重写整条或其他条目。"
+        "content 的范围必须与 old_text 一致，只改几个字就只提供对应的替换片段。"
+        "若确需替换整个条目，old_text 必须是完整旧条目，content 是保留其余约定的完整新条目。"
+        "不能用局部 old_text 配上完整的新条目，否则会重复拼接未修改的部分。"
         "例如把摘要语言从中文改为英文，只需 old_text=使用中文，content=使用英文。"
-        "保留未要求改变的事实，不复制其他已有条目，不保存编辑指令、密码、令牌、"
+        "当前请求没有提及的原有约定必须保留；简短重述偏好不表示要删除其余细节。"
+        "例如只改变摘要语言时，原有的排版、信息缺失处理和其他条目均保留。"
+        "不复制其他已有条目，不保存编辑指令、密码、令牌、"
         "原始邮件正文或临时待办。当前档案中的 § 仅是条目分隔符，不放进操作字段。"
         "输入（JSON）：\n"
         + json.dumps(
