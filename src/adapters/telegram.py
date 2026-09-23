@@ -10,6 +10,7 @@ from urllib.request import Request, urlopen
 
 from adapters.gmail import GmailError
 from adapters.messaging import MessageContentError
+from app.assistant import ToolCheckpointError
 from app.conversation import ConversationError
 from core.execution import ProviderError
 from core.routing import Privacy, RequestContext, Source
@@ -149,6 +150,22 @@ def reply_to_update(
         )
         try:
             answer = handle(request, context)
+        except ToolCheckpointError as error:
+            # Deliver the confirmed receipt, then preserve the storage failure so
+            # the receiver stops before another request reloads stale state.
+            notice = (
+                "近期会话保存失败，已执行的操作不会撤销，请勿重复提交。隐私状态可能未保存，接收器将停止。"
+                "请修复本地存储后重启并重新查询核实；"
+                "继续私人话题时请明确使用 /private。"
+            )
+            try:
+                send(error.reply.text + "\n\n" + notice)
+            except MessageContentError:
+                send(
+                    "本轮已取得工具结果，但回执内容无法通过纯文本发送检查；"
+                    "已执行的操作不会撤销，请勿重复提交。\n\n" + notice
+                )
+            raise
         except ConversationError:
             # Continuing could reload an old public state after a private save failed.
             # This fixed notice has no content directives; uncertain sends propagate.

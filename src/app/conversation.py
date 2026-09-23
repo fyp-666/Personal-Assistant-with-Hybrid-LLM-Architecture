@@ -30,10 +30,16 @@ def conversation_session(path: Path) -> Generator["Conversation", None, None]:
     was_private = state.private
     try:
         yield state
-    except BaseException:
-        # Failed requests add no turn, but must not reopen the cloud boundary.
+    except BaseException as error:
+        # Failed requests must not reopen the cloud boundary. A second failed
+        # save must preserve an existing storage error's confirmed tool receipt.
         if state.private and not was_private:
-            save_conversation(path, state)
+            try:
+                save_conversation(path, state)
+            except ConversationError:
+                if isinstance(error, ConversationError):
+                    raise error from None
+                raise
         raise
     else:
         save_conversation(path, state)
@@ -100,23 +106,19 @@ class Conversation:
         ):
             raise ValueError("无效的日历上下文。")
 
-    def record(
+    def apply_results(
         self,
-        message: str,
-        answer: str,
         *,
-        private: bool,
-        complexity: Complexity,
         email_result: EmailSearchResult | None = None,
         calendar_result: CalendarResult | None = None,
     ) -> None:
+        """Apply confirmed tool facts between decisions without adding a fake turn."""
         bounded = bound_email_result(email_result) if email_result is not None else None
         calendar = (
             CalendarResult.from_dict(calendar_result.to_dict())
             if calendar_result is not None
             else None
         )
-        self.private = self.private or private
         if calendar is not None:
             if (
                 calendar.operation == "query"
@@ -132,10 +134,23 @@ class Conversation:
                     known[item.event_id] = item
                 self.calendar_items = list(known.values())[-MAX_CALENDAR_RESULTS:]
             self.calendar_result = calendar
-        self.complexity = complexity
         if bounded is not None:
             # An empty result is still the current query; never reuse older mail.
             self.email_result = bounded
+
+    def record(
+        self,
+        message: str,
+        answer: str,
+        *,
+        private: bool,
+        complexity: Complexity,
+        email_result: EmailSearchResult | None = None,
+        calendar_result: CalendarResult | None = None,
+    ) -> None:
+        self.apply_results(email_result=email_result, calendar_result=calendar_result)
+        self.private = self.private or private
+        self.complexity = complexity
         self.turns.append(
             {
                 "user": message[: HISTORY_CHARS // 2],

@@ -4,14 +4,14 @@ import argparse
 from pathlib import Path
 
 from adapters.gmail import GmailError, query_gmail
-from app.assistant import handle_message
+from app.assistant import ToolCheckpointError, handle_message
 from app.conversation import (
     Conversation,
     ConversationError,
     conversation_session,
     save_conversation,
 )
-from app.runtime import create_providers, manage_calendar
+from app.runtime import create_providers, manage_calendar, read_user_preferences
 from core.execution import ProviderError
 from core.routing import Privacy, RequestContext, Source
 from features.calendar_actions import CalendarError
@@ -41,23 +41,36 @@ def main(argv: list[str] | None = None) -> None:
         offline=args.offline,
     )
     path = Path.home() / ".hermes/profiles/hw3-local/conversations/cli.json"
+    reply = None
     try:
         if args.new:
             save_conversation(path, Conversation())
+        providers = create_providers(load_local_context=False)
         with conversation_session(path) as conversation:
             reply = handle_message(
                 args.message,
-                create_providers(),
-                classifiers=create_providers(load_local_context=False),
+                providers,
+                classifiers=providers,
                 context=context,
                 read_emails=query_gmail,
                 update_memory=update_user_memory,
+                load_preferences=read_user_preferences,
                 manage_calendar=lambda request: manage_calendar(
                     request, offline=context.offline
                 ),
                 conversation=conversation,
+                persist_state=lambda state: save_conversation(path, state),
             )
     except ConversationError as error:
+        confirmed = error.reply if isinstance(error, ToolCheckpointError) else reply
+        if confirmed is not None:
+            print(confirmed.text)
+            parser.exit(
+                1,
+                "近期会话保存失败，已执行的操作不会因此撤销，请勿重复提交。"
+                "隐私状态可能未保存；请修复本地存储后重新查询核实，"
+                "继续私人话题时请明确使用 --private。\n",
+            )
         parser.exit(
             1,
             f"{error}\n本轮业务可能已执行，长期记忆修改也可能已保存。隐私状态可能未保存；修复会话文件前请继续使用 --private。\n",
@@ -67,12 +80,15 @@ def main(argv: list[str] | None = None) -> None:
     except ValueError as error:
         parser.error(str(error))
     print(
-        f"识别模型：{reply.intent.classifier.value}（回退：{reply.intent.used_fallback}）"
+        f"决策模型：{reply.intent.classifier.value}（回退：{reply.intent.used_fallback}）"
     )
     print(f"任务类型：{reply.intent.task.value}")
+    print(
+        f"决策步数：{reply.decision_count}；工具次数：{reply.tool_count}；结束原因：{reply.stop_reason}"
+    )
     if reply.execution is not None:
         print(
-            f"执行模型：{reply.execution.provider.value}（回退：{reply.execution.used_fallback}）"
+            f"回答模型：{reply.execution.provider.value}（回退：{reply.execution.used_fallback}）"
         )
     print()
     print(reply.text)

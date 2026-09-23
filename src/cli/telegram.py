@@ -14,14 +14,14 @@ from adapters.telegram import (
     load_telegram_config,
     reply_to_update,
 )
-from app.assistant import handle_message
+from app.assistant import ToolCheckpointError, handle_message
 from app.conversation import (
     Conversation,
     ConversationError,
     conversation_session,
     save_conversation,
 )
-from app.runtime import create_providers, manage_calendar
+from app.runtime import create_providers, manage_calendar, read_user_preferences
 from features.memory import update_user_memory
 
 
@@ -61,8 +61,7 @@ def main(argv: list[str] | None = None) -> None:
                 pending = get_updates(config, offset=-1, timeout=0)
                 offset = pending[-1]["update_id"] + 1 if pending else 0
                 save_offset(path, offset)
-            classifiers = create_providers(load_local_context=False)
-            providers = create_providers()
+            providers = create_providers(load_local_context=False)
 
             conversation_path = (
                 profile / "conversations" / f"telegram-{config.chat_id}.json"
@@ -72,24 +71,36 @@ def main(argv: list[str] | None = None) -> None:
                 save_conversation(conversation_path, Conversation())
 
             def handle(text, context):
-                with conversation_session(conversation_path) as conversation:
-                    reply = handle_message(
-                        text,
-                        providers,
-                        classifiers=classifiers,
-                        context=context,
-                        read_emails=query_gmail,
-                        update_memory=update_user_memory,
-                        manage_calendar=lambda request: manage_calendar(
-                            request, offline=context.offline
-                        ),
-                        conversation=conversation,
-                    )
+                reply = None
+                try:
+                    with conversation_session(conversation_path) as conversation:
+                        reply = handle_message(
+                            text,
+                            providers,
+                            classifiers=providers,
+                            context=context,
+                            read_emails=query_gmail,
+                            update_memory=update_user_memory,
+                            load_preferences=read_user_preferences,
+                            manage_calendar=lambda request: manage_calendar(
+                                request, offline=context.offline
+                            ),
+                            conversation=conversation,
+                            persist_state=lambda state: save_conversation(
+                                conversation_path, state
+                            ),
+                        )
+                except ConversationError:
+                    if reply is not None:
+                        # The handler returned; only the final session save failed.
+                        raise ToolCheckpointError(reply) from None
+                    raise
                 execution = (
                     reply.execution.provider.value if reply.execution else "none"
                 )
                 print(
-                    f"任务={reply.intent.task.value} 识别={reply.intent.classifier.value} 执行={execution}",
+                    f"任务={reply.intent.task.value} 决策={reply.intent.classifier.value} 回答={execution} "
+                    f"决策步数={reply.decision_count} 工具次数={reply.tool_count} 结束原因={reply.stop_reason}",
                     flush=True,
                 )
                 return reply.text

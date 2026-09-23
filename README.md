@@ -61,28 +61,54 @@ hybrid-assistant chat "明天有哪些日程？"
 hybrid-assistant calendar config/calendar.example.json --date 2026-09-08 --timezone America/Los_Angeles
 ```
 
-The `memory` command and recognized long-term preferences in chat **change the real USER.md** and show the committed diff. Request understanding recognizes clear preferences such as “I usually prefer short explanations,” without requiring a fixed “remember this” phrase. Request understanding is instructed to exclude one-off answer instructions, ordinary biographical details and email contents; model mistakes can still cause an unnecessary preference update.
+The `memory` command and recognized long-term preferences in chat **change the real USER.md** and show the committed diff. The decision model recognizes clear preferences such as “I usually prefer short explanations,” without requiring a fixed “remember this” phrase. It is instructed to exclude one-off answer instructions, ordinary biographical details and email contents; model mistakes can still cause an unnecessary preference update.
 
 ## Routing and privacy
 
-| Input | Request understanding | Answer / optional memory step |
+| Input | First decision | Later decisions / memory update |
 | --- | --- | --- |
 | Default conversation, email or calendar data | GPT | GPT |
 | Explicit /private, --private, or cloud restriction | Local | Local |
 | Offline request | Local | Local; remote data retrieval disabled |
 | GPT connection/provider failure | Local fallback | Local for the remaining request; later requests try GPT again |
 
-Every request receives the bounded conversation context. Email/calendar data does not itself force Local, and complexity no longer automatically selects NIM. The NIM adapter remains available but is outside the default route. Classifiers never load profile files implicitly. Answer providers read saved user preferences; model output cannot loosen explicit privacy restrictions.
+Trusted privacy and offline restrictions apply before the first model call. Every request receives bounded conversation context, explicit saved preferences, the current time and tool instructions. Email/calendar data does not itself force Local, and complexity no longer automatically selects NIM. The NIM adapter remains available but is outside the default route. All Chat and Telegram model providers disable implicit Hermes profile context; the application supplies bounded preferences as reference data. Model output cannot loosen explicit privacy restrictions.
 
 CLI and Telegram keep separate recent conversations. Explicit private requests lock their conversation to Local until chat --new or Telegram /new. Availability fallback does not set this lock. Older conversation files preserve their previous privacy lock during migration; start a new conversation to use the new default. Resetting a conversation preserves saved events and long-term preferences.
 
-Chat and Telegram share one response pipeline: request understanding, an optional memory update, at most one business tool operation, and a final model answer. Calendar queries and writes now pass their actual result to the same answer stage as email and ordinary chat; empty results and tool errors also reach that stage. Normally this means two model calls, plus one optional memory extraction call. Timed reminder delivery and standalone CLI result rendering do not add an answer-model call.
+Chat and Telegram share a bounded decision loop. Each model step returns exactly six JSON fields: `answer`, `tool_request`, `memory_request`, `complexity`, `needs_private_context` and `calendar_goal`. Exactly one of `answer` and `tool_request` is non-null. A tool request contains `name` (`email` or `calendar`), validated `arguments` and `result_mode` (`direct` or `continue`). The model can answer, clarify, or request one tool at each step. Completed results can return to the same decision node for another tool request or an answer.
 
-The answer receives an explicit current-tool outcome: completed, not executed, or unconfirmed. Current results are distinguished from historical snapshots; an unconfirmed write must not be described as successful or automatically retried. If all permitted answer providers fail, the application displays the actual tool receipt/error and still saves confirmed results and new event versions for follow-up. Email source headers and memory diffs remain program-rendered. Calendar replies use natural language; raw identifiers remain available internally and in fallback receipts. Generated wording can still be wrong and is not independently reviewed by another model.
+```mermaid
+flowchart TD
+    Context[Context, preferences, time, tools and current results] --> Decision[Model decision]
+    Decision -->|Answer or clarification| End[Deliver and finish]
+    Decision -->|Tool request| Validate[Validate and execute]
+    Validate -->|Blocked or unconfirmed| Receipt[Report actual outcome and stop]
+    Validate -->|Completed| Save[Update and checkpoint confirmed state]
+    Save -->|direct| End
+    Save -->|continue, within budget| Decision
+```
+
+| Path | Typical decision calls, excluding optional memory and provider fallback |
+| --- | --- |
+| Direct answer or snapshot follow-up | 1 |
+| Tool with `result_mode=direct` | 1 |
+| Read then interpret | 2 |
+| Discover a calendar target, then update/cancel | 2 with a direct receipt; 3 with a generated answer |
+
+The default limits are five decisions, four business-tool calls and a 240-second soft deadline per message. The deadline is checked before starting further work; it does not interrupt an in-flight model or tool call. Calls retain their existing transport timeouts. A request can read more than once but can perform at most one calendar write. Unchanged tool calls are blocked; repeating a read after a confirmed write is permitted for verification. Exhausted budgets or subsequent model failures return available factual receipts without replaying tools.
+
+The model chooses `direct` only when the fixed Chinese result rendering satisfies the whole request and relevant preferences. Email rendering lists query scope, source numbers, senders and subjects, without body content. Calendar rendering provides a list or receipt with event times, duration, location and reminder state, hiding internal IDs and versions. Summaries, comparisons, English replies, custom formats and intermediate target searches use `continue`. There is no extra model that chooses this mode and no final-only synthesis stage.
+
+`calendar_goal` records the original calendar purpose (`query`, `create`, `update`, `cancel`, or null) and is locked after the first decision. A later calendar write must match that purpose. For an update/cancel target search, Python retains the requested date range but sets title text to null and the limit to ten. This prevents a literal title filter from hiding candidates before the model sees them. The next decision receives those candidates, the original user description, and both requested and executed arguments. It may select a sufficiently supported target or ask for clarification; approximate wording does not guarantee a match. Calendar versions and target IDs are still checked by code and the source adapter.
+
+The application distinguishes completed, not-executed and unconfirmed results from historical snapshots. Blocked and failed operations stop with a factual receipt; uncertain writes are never automatically replayed. Every successful tool result updates the working set and is checkpointed before another model call. This preserves confirmed results and new event versions even if later inference fails or is interrupted. If saving fails, the response retains the confirmed receipt and reports that conversation state was not saved. Direct replies retain each requested query scope and result in order, as well as earlier confirmed calendar-write receipts. Intermediate calendar reads used to locate a write target are omitted from the final write receipt. Email source headers and memory diffs remain program-rendered. Model decisions and wording can still be wrong and are not independently reviewed by another model.
 
 Each conversation retains its latest email query and numbered results. Calendar context keeps up to ten known records, updating individual IDs/versions after a mutation, alongside the last operation receipt. A new calendar query replaces this working set, including an empty query. These are contextual snapshots; writes still verify the current source version.
 
-Chat uses three capability labels: `chat`, `email` and `calendar`. An independent optional `memory_request` carries the current user's clearly expressed long-term preference or edit, so one message can update memory and still ask a question or query mail. Memory uses one extraction call through the selected route plus deterministic patch validation; there is no separate semantic-equivalence check, and limited wording-only updates are acceptable. The handler commits memory first, then answers with the updated preferences. It reports the actual memory outcome even if the query or answer fails; a memory failure does not cancel the remaining request. Email scope is structured data, not a new task label for every phrase. Queries support subject text, paired received-time bounds and a count (default 5, maximum 10). Dates use America/Los_Angeles with an inclusive start and exclusive end. Results follow descending INBOX UID order; one extra matching UID (and received time when filtered) is checked without fetching its body, so the reply can disclose incomplete results. The shared history remains at most 6 exchanges / 12,000 characters; all saved email bodies share a 16,000-character budget including truncation notices. Existing single-email conversation files migrate on load and are written in the new versioned format on the next save.
+An independent optional `memory_request` carries the current user's clearly expressed long-term preference or edit, so one message can update memory and still ask a question or query mail. Memory uses one separate update-model call through the selected route plus deterministic patch validation; there is no separate semantic-equivalence check, and limited wording-only updates are acceptable. The first decision already follows the current message's new preferences when drafting a direct answer. The handler then attempts the memory update before delivering that answer, without asking the model to rewrite it. Memory runs at most once per message. When an update completes, the next decision rereads the saved preferences; a failed update does not prevent following the current message's preferences for that turn. Only the program reports the actual save outcome, even if a later query or decision fails. A memory failure does not cancel the remaining request.
+
+Email scope is structured data, not a new task label for every phrase. Queries support subject text, paired received-time bounds and a count (default 5, maximum 10). Dates use America/Los_Angeles with an inclusive start and exclusive end. Results follow descending INBOX UID order; one extra matching UID (and received time when filtered) is checked without fetching its body, so the reply can disclose incomplete results. The shared history remains at most 6 exchanges / 12,000 characters; all saved email bodies share a 16,000-character budget including truncation notices. Existing single-email conversation files migrate on load and are written in the new versioned format on the next save.
 
 ## Repository structure
 
@@ -110,7 +136,7 @@ The five packages live directly under `src/`, without an outer `hybrid_assistant
 - Daily reports and chat context remain separate. A pushed daily report is not automatically available for follow-up questions.
 - The Telegram receiver runs in the foreground; background service operation has not been added.
 - An 08:00 America/Los_Angeles schedule is installed. Check its actual enabled state before expecting delivery; the review observed the Windows task disabled and left it unchanged.
-- Generated classifications, query ranges and answers can be wrong. Tests verify routing, state and failure behavior, not arbitrary model factual accuracy.
+- Generated decisions, query ranges and answers can be wrong. Tests verify routing, state and failure behavior, not arbitrary model factual accuracy.
 
 ## Verify
 
@@ -169,6 +195,6 @@ Preview refreshes Google's local reminder cache but sends nothing. Sending check
 
 The SQLite file is a per-calendar delivery ledger, not an independent editable copy. The checker covers the maximum 28-day reminder lead, processes at most 10 due reminders per batch, and accepts reminders up to 15 minutes late. It records attempts before sending, preserves sent/uncertain states across metadata changes, and never automatically retries uncertain deliveries. Delivery still requires WSL and the checking process to remain running; no background service is installed.
 
-The request-understanding model receives each known event's start, end, duration and other fields. For a create/update it computes and returns the complete proposed event, including starts_at, ends_at and duration_minutes. Python checks that all fields are valid and that end minus start equals duration; it rejects missing or inconsistent proposals rather than calculating a replacement. It verifies the target/version, writes actual changed fields and renders the result without another model call. Reminder checking and delivery require no model. GPT handles these requests by default; --private selects Local. --offline blocks Google access and never writes to an alternative calendar.
+The decision model receives each known event's start, end, duration and other fields. For a create/update it computes and returns the complete proposed event, including starts_at, ends_at and duration_minutes. Python checks that all fields are valid and that end minus start equals duration; it rejects missing or inconsistent proposals rather than calculating a replacement. It verifies the target/version and writes actual changed fields. A `direct` request renders the confirmed result without another model call; `continue` passes the result back to the decision loop, which can answer, clarify or request another permitted tool. Reminder checking and delivery require no model. GPT handles these requests by default; --private selects Local. --offline blocks Google access and never writes to an alternative calendar.
 
 `--store PATH` on the reminders command explicitly selects a local database for isolated use. The older `calendar config/calendar.example.json` entry remains a file briefing. Credentials, calendar data, internal docs and tests stay local.

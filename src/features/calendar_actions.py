@@ -322,7 +322,9 @@ class CalendarResult:
         )
 
 
-def render_calendar_item(item: CalendarItem) -> str:
+def render_calendar_item(
+    item: CalendarItem, *, include_identifiers: bool = True
+) -> str:
     reminder = (
         "不提醒"
         if item.reminder_minutes is None
@@ -330,15 +332,22 @@ def render_calendar_item(item: CalendarItem) -> str:
         if item.reminder_minutes == 0
         else f"提前 {item.reminder_minutes} 分钟提醒"
     )
+    if item.status == "cancelled":
+        reminder = "已取消，不再提醒"
     duration = f"{item.duration_minutes} 分钟" if item.duration_minutes else "提醒事项"
+    identifiers = (
+        f"\n编号：{item.event_id}；版本：{item.version}" if include_identifiers else ""
+    )
     return (
         f"{item.title}\n时间：{item.starts_at}（{item.timezone}）\n"
-        f"时长：{duration}；地点：{item.location or '未设置'}；Telegram：{reminder}\n"
-        f"编号：{item.event_id}；版本：{item.version}"
+        f"时长：{duration}；地点：{item.location or '未设置'}；Telegram：{reminder}"
+        f"{identifiers}"
     )
 
 
-def render_calendar_result(result: CalendarResult) -> str:
+def render_calendar_result(
+    result: CalendarResult, *, include_identifiers: bool = True
+) -> str:
     label = {
         "query": "日程查询",
         "create": "已创建日程",
@@ -358,7 +367,8 @@ def render_calendar_result(result: CalendarResult) -> str:
         if result.query.text:
             lines.append(f"标题包含：{result.query.text}")
     lines.extend(
-        f"[{i}] {render_calendar_item(item)}" for i, item in enumerate(result.items, 1)
+        f"[{i}] {render_calendar_item(item, include_identifiers=include_identifiers)}"
+        for i, item in enumerate(result.items, 1)
     )
     if not result.items:
         lines.append(
