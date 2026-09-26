@@ -11,7 +11,7 @@ from urllib.request import Request, urlopen
 from adapters.gmail import GmailError
 from adapters.messaging import MessageContentError
 from app.assistant import ToolCheckpointError
-from app.conversation import ConversationError
+from app.conversation import ConversationError, ConversationVersionError
 from core.execution import ProviderError
 from core.routing import Privacy, RequestContext, Source
 from features.calendar_actions import CalendarError
@@ -134,7 +134,7 @@ def reply_to_update(
         answer = "已开始新会话，近期对话和邮件、日历快照已清空，长期偏好保留，已保存日程不变。"
     elif command in {"/start", "/help"}:
         answer = (
-            "可以聊天、按日期或主题查询邮件（每次最多10封），查询、创建、修改或取消本地日程，或更新长期偏好。会结合近期对话和已查询邮件理解你的消息；/new 开始新会话，长期偏好保留。"
+            "可以聊天、按日期或主题查询邮件（每次最多10封），查询、创建、修改或取消已绑定的 Google 日历日程，或更新长期偏好。会结合近期对话和已查询的邮件、日历资料理解你的消息；/new 开始新会话，长期偏好保留。"
             "默认使用 GPT 理解和回答，可使用近期对话、邮件及日历资料；连接失败时回退 Local。需要仅本地处理请用 /private 你的问题，之后保持本地直到 /new。"
         )
     elif text.startswith("/") and command != "/private":
@@ -166,6 +166,12 @@ def reply_to_update(
                     "已执行的操作不会撤销，请勿重复提交。\n\n" + notice
                 )
             raise
+        except ConversationVersionError:
+            # Loading failed before inference or tools. Keep polling so /new can reset it.
+            answer = (
+                "近期会话格式版本不受支持，本轮未执行。"
+                "请发送 /new 开始新会话；需要保留旧上下文时，请先单独转换存档。"
+            )
         except ConversationError:
             # Continuing could reload an old public state after a private save failed.
             # This fixed notice has no content directives; uncertain sends propagate.

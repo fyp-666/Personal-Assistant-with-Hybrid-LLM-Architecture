@@ -7,8 +7,8 @@ from pathlib import Path
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-from adapters.calendar_store import LocalCalendarStore
 from adapters.google_calendar_auth import build_service, calendar_home, load_config
+from adapters.reminder_ledger import ReminderLedger
 from features.calendar_actions import (
     CalendarError,
     CalendarItem,
@@ -88,7 +88,7 @@ class GoogleCalendar:
 
     @property
     def ledger(self):
-        return LocalCalendarStore(
+        return ReminderLedger(
             self.home / f"reminders-{self.prefix.split(':')[1]}.sqlite3"
         )
 

@@ -50,20 +50,17 @@ def create_providers(
 
 
 def create_calendar(*, offline: bool = False):
-    """Select the configured calendar lazily; offline never falls back to another source."""
-    from adapters.calendar_store import LocalCalendarStore
+    """Use Google Calendar only; missing configuration never creates local events."""
     from adapters.google_calendar import GoogleCalendar
     from adapters.google_calendar_auth import calendar_home
     from features.calendar_actions import CalendarError
 
+    if offline:
+        raise CalendarError("离线模式不能查询或修改 Google 日历；本次未执行。")
     home = calendar_home()
-    if (home / "config.json").exists():
-        if offline:
-            raise CalendarError(
-                "当前绑定 Google 日历，离线模式不能查询或修改；本次未执行。"
-            )
-        return GoogleCalendar(home=home)
-    return LocalCalendarStore()
+    if not (home / "config.json").exists():
+        raise CalendarError("尚未绑定 Google 日历，请先运行 calendar google connect。")
+    return GoogleCalendar(home=home)
 
 
 def manage_calendar(request, *, offline: bool = False):

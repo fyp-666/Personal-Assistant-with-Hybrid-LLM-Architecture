@@ -10,7 +10,7 @@ from typing import Literal
 
 from adapters.gmail import GmailError
 from app.conversation import Conversation, ConversationError, bound_email_result
-from app.intent import USER_TIMEZONE, IdentifiedTask, TaskType, identify_task
+from app.decision import USER_TIMEZONE, DecisionBranch, StepDecision, decide_next_step
 from core.execution import ExecutionResult, ProviderError, execute_plan
 from core.routing import Privacy, Provider, RequestContext, plan_route
 from features.calendar_actions import (
@@ -35,7 +35,7 @@ class MemoryOutcome:
 @dataclass(frozen=True)
 class AssistantReply:
     text: str
-    intent: IdentifiedTask
+    decision: StepDecision  # First step, retained for request-level metadata.
     execution: ExecutionResult | None = None
     memory: MemoryOutcome | None = None
     decision_count: int = 0
@@ -119,6 +119,34 @@ class _ToolOutcome:
             if key in result_state:
                 data[key] = result_state[key]
         return data
+
+
+def _render_tool_receipts(
+    outcomes: list[_ToolOutcome], calendar_goal: str | None
+) -> str:
+    """Keep requested query results and failures without repeating write lookups."""
+    if not outcomes:
+        return ""
+    visible = [
+        prior
+        for prior in outcomes[:-1]
+        if prior.status != "completed"
+        or prior.operation != "query"
+        or prior.capability == "email"
+        or calendar_goal == "query"
+    ] + [outcomes[-1]]
+    query_count = sum(
+        item.operation == "query" and item.status == "completed" for item in visible
+    )
+    query_number = 0
+    receipts = []
+    for item in visible:
+        if item.operation == "query" and item.status == "completed" and query_count > 1:
+            query_number += 1
+            receipts.append(f"查询结果 {query_number}：\n{item.detail}")
+        else:
+            receipts.append(item.detail)
+    return "\n\n".join(receipts)
 
 
 def _execute_tool(
@@ -213,7 +241,6 @@ def handle_message(
     message: str,
     providers: Mapping[Provider, Callable[[str], str]],
     *,
-    classifiers: Mapping[Provider, Callable[[str], str]],
     context: RequestContext,
     read_emails: Callable[[EmailQuery], EmailSearchResult],
     update_memory: Callable[..., MemoryUpdate],
@@ -250,7 +277,7 @@ def handle_message(
     current_time = now if now is not None else datetime.now(USER_TIMEZONE)
     preferences = load_preferences() if load_preferences is not None else ""
     execution_context = context
-    initial_intent = None
+    initial_decision = None
     calendar_goal = None
     memory = None
     preferences_dirty = False
@@ -264,7 +291,7 @@ def handle_message(
     def generate_memory(prompt: str) -> str:
         nonlocal execution_context
         try:
-            result = execute_plan(plan_route(execution_context), prompt, classifiers)
+            result = execute_plan(plan_route(execution_context), prompt, providers)
         except ProviderError:
             execution_context = replace(execution_context, cloud_allowed=False)
             raise
@@ -279,33 +306,27 @@ def handle_message(
             message,
             text,
             private=state.private,
-            complexity=initial_intent.context.complexity,
+            complexity=initial_decision.context.complexity,
         )
         return AssistantReply(
-            text, initial_intent, execution, memory, decisions, tool_calls, stop_reason
+            text,
+            initial_decision,
+            execution,
+            memory,
+            decisions,
+            tool_calls,
+            stop_reason,
         )
 
     def stop(detail, reason):
-        # Preserve every confirmed write and the most recent observation of each
-        # capability. Later failures cannot erase a successful operation's receipt.
-        selected = {}
-        for i, outcome in enumerate(outcomes):
-            key = (
-                "write"
-                if outcome.capability == "calendar"
-                and outcome.operation != "query"
-                and outcome.status == "completed"
-                else outcome.capability
-            )
-            selected[key] = (i, outcome.detail)
-        receipts = [text for _, text in sorted(selected.values())]
+        receipts = _render_tool_receipts(outcomes, calendar_goal)
         if receipts:
-            detail += "\n以下是本轮已取得的实际结果：\n" + "\n\n".join(receipts)
+            detail += "\n以下是本轮已取得的实际结果：\n" + receipts
         return finish(detail, stop_reason=reason)
 
     for step in range(1, max_steps + 1):
         if (
-            initial_intent is not None
+            initial_decision is not None
             and time.monotonic() - started >= max_elapsed_seconds
         ):
             return stop("已达到本轮处理时限，未再执行后续操作。", "time_limit")
@@ -321,15 +342,15 @@ def handle_message(
             "tool_calls_remaining": max_tool_calls - tool_calls,
             "calendar_goal": calendar_goal,
             "write_completed": write_completed,
-            "memory_processed": initial_intent is not None,
+            "memory_processed": initial_decision is not None,
             "memory_outcome": asdict(memory) if memory is not None else None,
             "tool_history": tool_history,
         }
         decisions += 1
         try:
-            intent = identify_task(
+            decision = decide_next_step(
                 message,
-                classifiers if initial_intent is None else providers,
+                providers,
                 context=execution_context,
                 conversation=state,
                 now=current_time,
@@ -337,26 +358,26 @@ def handle_message(
                 run_state=run_state,
             )
         except ProviderError:
-            if initial_intent is None:
+            if initial_decision is None:
                 raise
             return stop("后续模型决策暂不可用，未重试任何工具。", "decision_failed")
-        execution_context = intent.context
-        if intent.used_fallback:
+        execution_context = decision.context
+        if decision.used_fallback:
             execution_context = replace(execution_context, cloud_allowed=False)
-        if initial_intent is None:
-            initial_intent = intent
-            calendar_goal = intent.calendar_goal
-            if intent.memory_request is not None:
+        if initial_decision is None:
+            initial_decision = decision
+            calendar_goal = decision.calendar_goal
+            if decision.memory_request is not None:
                 memory = _update_memory(
-                    intent.memory_request, update_memory, generate_memory
+                    decision.memory_request, update_memory, generate_memory
                 )
                 preferences_dirty = memory.status != "failed"
-        elif intent.memory_request is not None:
+        elif decision.memory_request is not None:
             # Defense in depth if a custom decision provider bypasses the parser.
             return stop("本轮记忆步骤已处理，未重复保存。", "repeated_memory")
 
-        if intent.task is TaskType.CHAT:
-            text = intent.answer
+        if decision.branch is DecisionBranch.ANSWER:
+            text = decision.answer
             emails = [o.email_result for o in outcomes if o.email_result is not None]
             if emails:
                 sources = [
@@ -365,20 +386,20 @@ def handle_message(
                 ]
                 text = "\n\n".join([*sources, text])
             execution = ExecutionResult(
-                intent.classifier, intent.answer, intent.used_fallback
+                decision.provider, decision.answer, decision.used_fallback
             )
             return finish(text, execution)
 
         request = (
-            intent.calendar_request
-            if intent.task is TaskType.CALENDAR
-            else intent.email_query
+            decision.calendar_request
+            if decision.branch is DecisionBranch.CALENDAR
+            else decision.email_query
         )
         if request is None:
             return stop("工具参数缺失，本次拟议操作未执行。", "invalid_request")
         requested = request.to_dict()
         if isinstance(request, CalendarRequest):
-            if intent.calendar_goal != calendar_goal:
+            if decision.calendar_goal != calendar_goal:
                 return stop("后续日历操作超出本轮原定目标，未执行。", "goal_changed")
             if request.operation != "query":
                 if request.operation != calendar_goal:
@@ -397,7 +418,7 @@ def handle_message(
                 )
         actual = request.to_dict()
         fingerprint = (
-            intent.task.value,
+            decision.branch.value,
             write_completed,
             json.dumps(actual, sort_keys=True),
         )
@@ -442,28 +463,6 @@ def handle_message(
                     "persistence_failed",
                 )
                 raise ToolCheckpointError(reply) from None
-        if intent.result_mode == "direct":
-            # Keep each requested query's scope and result in the final receipt.
-            # Calendar reads that locate a write target remain intermediate facts;
-            # a cancellation receipt should not repeat an old candidate listing.
-            visible = [
-                prior
-                for prior in outcomes[:-1]
-                if prior.status == "completed"
-                and (
-                    prior.operation != "query"
-                    or prior.capability == "email"
-                    or calendar_goal == "query"
-                )
-            ] + [outcome]
-            query_count = sum(item.operation == "query" for item in visible)
-            query_number = 0
-            receipts = []
-            for item in visible:
-                if item.operation == "query" and query_count > 1:
-                    query_number += 1
-                    receipts.append(f"查询结果 {query_number}：\n{item.detail}")
-                else:
-                    receipts.append(item.detail)
-            return finish("\n\n".join(receipts))
+        if decision.result_mode == "direct":
+            return finish(_render_tool_receipts(outcomes, calendar_goal))
     return stop("已达到本轮决策步数上限，未再调用模型或工具。", "step_limit")

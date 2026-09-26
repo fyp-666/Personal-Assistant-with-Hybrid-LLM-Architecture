@@ -20,7 +20,7 @@ class CalendarError(RuntimeError):
 
 
 class CalendarBusyError(CalendarError):
-    """Another local calendar operation currently owns the dispatch/write lock."""
+    """Another reminder synchronization or delivery batch owns the ledger lock."""
 
 
 def aware_time(value: str) -> datetime:

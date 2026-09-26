@@ -77,7 +77,6 @@ def main(argv: list[str] | None = None) -> None:
                         reply = handle_message(
                             text,
                             providers,
-                            classifiers=providers,
                             context=context,
                             read_emails=query_gmail,
                             update_memory=update_user_memory,
@@ -99,7 +98,7 @@ def main(argv: list[str] | None = None) -> None:
                     reply.execution.provider.value if reply.execution else "none"
                 )
                 print(
-                    f"任务={reply.intent.task.value} 决策={reply.intent.classifier.value} 回答={execution} "
+                    f"首步分支={reply.decision.branch.value} 决策={reply.decision.provider.value} 回答={execution} "
                     f"决策步数={reply.decision_count} 工具次数={reply.tool_count} 结束原因={reply.stop_reason}",
                     flush=True,
                 )

@@ -8,7 +8,6 @@ from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from adapters.calendar_file import load_calendar_file
-from adapters.calendar_store import LocalCalendarStore
 from adapters.messaging import send_message
 from adapters.telegram import TelegramError, load_telegram_config
 from app.runtime import create_calendar, create_providers
@@ -54,7 +53,6 @@ def _reminders(argv: list[str]) -> None:
         prog="hybrid-assistant calendar reminders",
         description="默认仅预览到期提醒；--send 才实际发送到已绑定的 Telegram。",
     )
-    parser.add_argument("--store", type=Path, help="本地日历数据库路径")
     parser.add_argument("--send", action="store_true", help="实际发送并记录结果")
     parser.add_argument(
         "--watch", action="store_true", help="持续检查，须同时 --send；Ctrl+C 停止"
@@ -71,7 +69,7 @@ def _reminders(argv: list[str]) -> None:
     if args.status and (args.send or args.watch):
         parser.error("--status 不能与发送或持续检查并用。")
     try:
-        store = LocalCalendarStore(args.store) if args.store else create_calendar()
+        calendar = create_calendar()
         if args.status:
             labels = {
                 "pending": "待发送",
@@ -82,7 +80,7 @@ def _reminders(argv: list[str]) -> None:
                 "expired": "超出补发窗口",
                 "cancelled": "已取消",
             }
-            status = store.reminder_status()
+            status = calendar.reminder_status()
             print(
                 "；".join(
                     f"{labels.get(key, key)}：{count}" for key, count in status.items()
@@ -91,15 +89,15 @@ def _reminders(argv: list[str]) -> None:
             )
             return
         if not args.send:
-            items = store.preview_due()
-            print("到期待发送提醒预览（未发送；Google 模式会刷新本地同步记录）：")
+            items = calendar.preview_due()
+            print("到期待发送提醒预览（未发送；已同步 Google 日历）：")
             print(
                 "\n\n".join(render_calendar_item(item) for item in items)
                 or "暂无到期提醒。"
             )
-            if getattr(store, "skipped_items", 0):
+            if calendar.skipped_items:
                 print(
-                    f"另有 {store.skipped_items} 条暂不支持的 Google 日程，请在 Google 查看。"
+                    f"另有 {calendar.skipped_items} 条暂不支持的 Google 日程，请在 Google 查看。"
                 )
             return
         config = load_telegram_config(Path.home() / ".hermes/profiles/hw3-local")
@@ -112,7 +110,7 @@ def _reminders(argv: list[str]) -> None:
 
         while True:
             try:
-                result = store.send_due(deliver)
+                result = calendar.send_due(deliver)
             except CalendarBusyError:
                 if not args.watch:
                     raise
@@ -124,9 +122,9 @@ def _reminders(argv: list[str]) -> None:
                 f"结果不确定 {result['unknown']}；超时未补发 {result['expired']}。",
                 flush=True,
             )
-            if getattr(store, "skipped_items", 0):
+            if calendar.skipped_items:
                 print(
-                    f"另有 {store.skipped_items} 条暂不支持的 Google 日程，本批未为它们发送提醒。",
+                    f"另有 {calendar.skipped_items} 条暂不支持的 Google 日程，本批未为它们发送提醒。",
                     flush=True,
                 )
             if not args.watch:

@@ -12,6 +12,7 @@ from core.routing import Complexity
 from features.calendar_actions import MAX_CALENDAR_RESULTS, CalendarItem, CalendarResult
 from features.email import MAX_EMAIL_RESULTS, Email, EmailQuery, EmailSearchResult
 
+CONVERSATION_VERSION = 5
 MAX_TURNS = 6
 HISTORY_CHARS = 12000
 EMAIL_CHARS = 16000
@@ -21,6 +22,10 @@ _TRUNCATED = "\n[后续邮件正文未保留]"
 
 class ConversationError(RuntimeError):
     """Conversation state could not be safely loaded or saved."""
+
+
+class ConversationVersionError(ConversationError):
+    """The stored conversation does not use the supported release format."""
 
 
 @contextmanager
@@ -190,12 +195,12 @@ class Conversation:
         return data
 
 
-def _email_from_dict(data: object, *, body_limit: int = EMAIL_CHARS) -> Email:
+def _email_from_dict(data: object) -> Email:
     if (
         not isinstance(data, dict)
         or set(data) != {"sender", "subject", "body"}
         or any(not isinstance(value, str) for value in data.values())
-        or len(data["body"]) > body_limit
+        or len(data["body"]) > EMAIL_CHARS
         or len(data["sender"]) > EMAIL_HEADER_CHARS
         or len(data["subject"]) > EMAIL_HEADER_CHARS
     ):
@@ -229,55 +234,22 @@ def _result_from_dict(data: object) -> EmailSearchResult | None:
 
 
 def load_conversation(path: Path) -> Conversation:
+    """Read only the current release format; unsupported files are left untouched."""
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(data, dict) or type(data.get("private")) is not bool:
-            raise ValueError("Invalid conversation privacy flag")
+        if not isinstance(data, dict):
+            raise TypeError("Invalid conversation")
         if (
-            isinstance(data, dict)
-            and type(data.get("version")) is int
-            and data["version"] == 2
+            type(data.get("version")) is not int
+            or data["version"] != CONVERSATION_VERSION
         ):
-            if set(data) != {
-                "version",
-                "turns",
-                "private",
-                "email_result",
-                "complexity",
-            }:
-                raise ValueError("Invalid version 2 conversation")
-            data = {
-                **data,
-                "version": 3,
-                "calendar_result": None,
-                "private": data["private"] or data["email_result"] is not None,
-            }
+            raise ConversationVersionError(
+                f"会话格式版本不受支持，仅支持版本 {CONVERSATION_VERSION}；"
+                "请先单独转换存档，或使用 chat --new / Telegram /new 开始新会话。"
+            )
         if (
-            isinstance(data, dict)
-            and type(data.get("version")) is int
-            and data["version"] == 3
-        ):
-            if set(data) != {
-                "version",
-                "turns",
-                "private",
-                "email_result",
-                "calendar_result",
-                "complexity",
-            }:
-                raise ValueError("Invalid version 3 conversation")
-            snapshot = data["calendar_result"]
-            data = {
-                **data,
-                "version": 4,
-                "calendar_items": snapshot["items"] if snapshot is not None else [],
-            }
-        if (
-            isinstance(data, dict)
-            and type(data.get("version")) is int
-            and data["version"] == 4
-        ):
-            expected = {
+            set(data)
+            != {
                 "version",
                 "turns",
                 "private",
@@ -286,40 +258,6 @@ def load_conversation(path: Path) -> Conversation:
                 "calendar_items",
                 "complexity",
             }
-            if set(data) != expected:
-                raise ValueError("Invalid version 4 conversation")
-            data = {
-                **data,
-                "version": 5,
-                "private": data["private"]
-                or data["email_result"] is not None
-                or data["calendar_result"] is not None,
-            }
-        legacy = isinstance(data, dict) and set(data) == {
-            "turns",
-            "private",
-            "email",
-            "complexity",
-        }
-        if (
-            not isinstance(data, dict)
-            or (
-                not legacy
-                and (
-                    set(data)
-                    != {
-                        "version",
-                        "turns",
-                        "private",
-                        "email_result",
-                        "calendar_result",
-                        "calendar_items",
-                        "complexity",
-                    }
-                    or type(data["version"]) is not int
-                    or data["version"] != 5
-                )
-            )
             or type(data["private"]) is not bool
         ):
             raise ValueError("Invalid conversation")
@@ -337,32 +275,19 @@ def load_conversation(path: Path) -> Conversation:
             raise ValueError("Invalid turns")
         if sum(len(t["user"]) + len(t["assistant"]) for t in turns) > HISTORY_CHARS:
             raise ValueError("History exceeds budget")
-        if legacy:
-            raw_email = data["email"]
-            email_result = (
-                None
-                if raw_email is None
-                else bound_email_result(
-                    EmailSearchResult(
-                        EmailQuery(limit=1),
-                        [_email_from_dict(raw_email, body_limit=EMAIL_CHARS + 100)],
-                    )
-                )
-            )
-        else:
-            email_result = _result_from_dict(data["email_result"])
+        email_result = _result_from_dict(data["email_result"])
         calendar_result = (
             CalendarResult.from_dict(data["calendar_result"])
-            if not legacy and data["calendar_result"] is not None
+            if data["calendar_result"] is not None
             else None
         )
-        raw_items = [] if legacy else data["calendar_items"]
+        raw_items = data["calendar_items"]
         if not isinstance(raw_items, list):
             raise TypeError("Invalid calendar context")
         calendar_items = [CalendarItem.from_dict(item) for item in raw_items]
         return Conversation(
             turns,
-            data["private"] or (legacy and email_result is not None),
+            data["private"],
             email_result,
             Complexity(data["complexity"]),
             calendar_result,
@@ -382,7 +307,7 @@ def save_conversation(path: Path, conversation: Conversation) -> None:
         path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         result = conversation.email_result
         data = {
-            "version": 5,
+            "version": CONVERSATION_VERSION,
             "turns": conversation.turns,
             "private": conversation.private,
             "email_result": (
@@ -413,4 +338,8 @@ def save_conversation(path: Path, conversation: Conversation) -> None:
         raise ConversationError("会话文件保存失败，本轮结果未保存。") from None
     finally:
         if temporary is not None:
-            temporary.unlink(missing_ok=True)
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                # Cleanup must not mask the storage error and its confirmed receipt.
+                pass

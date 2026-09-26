@@ -24,18 +24,22 @@ from features.email import EmailQuery
 USER_TIMEZONE = ZoneInfo("America/Los_Angeles")
 
 
-class TaskType(Enum):
-    CHAT = "chat"
+class DecisionBranch(Enum):
+    """The operation branch selected for this model step."""
+
+    ANSWER = "answer"
     EMAIL = "email"
     CALENDAR = "calendar"
 
 
 @dataclass(frozen=True)
-class IdentifiedTask:
-    task: TaskType
+class StepDecision:
+    """A validated model decision; any proposed tool is still unexecuted."""
+
+    branch: DecisionBranch
     context: RequestContext
     needs_private_context: bool
-    classifier: Provider
+    provider: Provider
     used_fallback: bool
     email_query: EmailQuery | None = None
     memory_request: str | None = None
@@ -45,10 +49,10 @@ class IdentifiedTask:
     calendar_goal: str | None = None
 
 
-def _parse_intent(
+def _parse_decision(
     reply: str,
 ) -> tuple[
-    TaskType,
+    DecisionBranch,
     Complexity,
     bool,
     EmailQuery | None,
@@ -82,7 +86,7 @@ def _parse_intent(
             if not isinstance(answer, str) or not answer.strip():
                 raise ValueError("answer must be a nonempty string")
             answer = answer.strip()
-        task = TaskType.CHAT
+        branch = DecisionBranch.ANSWER
         query = None
         calendar_request = None
         result_mode = None
@@ -97,9 +101,9 @@ def _parse_intent(
                 raise ValueError("Unsupported tool")
             if tool["result_mode"] not in ("direct", "continue"):
                 raise ValueError("Unsupported result mode")
-            task = TaskType(tool["name"])
+            branch = DecisionBranch(tool["name"])
             result_mode = tool["result_mode"]
-            if task is TaskType.EMAIL:
+            if branch is DecisionBranch.EMAIL:
                 query = EmailQuery.from_dict(tool["arguments"], timezone=USER_TIMEZONE)
             else:
                 raw_request = tool["arguments"]
@@ -127,7 +131,7 @@ def _parse_intent(
                 )
             memory_request = memory_request.strip()
         return (
-            task,
+            branch,
             Complexity(data["complexity"]),
             data["needs_private_context"],
             query,
@@ -143,7 +147,7 @@ def _parse_intent(
         ) from None
 
 
-def identify_task(
+def decide_next_step(
     message: str,
     providers: Mapping[Provider, Callable[[str], str]],
     *,
@@ -152,7 +156,7 @@ def identify_task(
     now: datetime | None = None,
     user_preferences: str = "",
     run_state: dict | None = None,
-) -> IdentifiedTask:
+) -> StepDecision:
     """Choose one step after applying trusted privacy restrictions.
 
     Provider callables must disable implicit profile context. Preferences are
@@ -294,7 +298,7 @@ def identify_task(
     decision_plan = plan_route(replace(context, complexity=Complexity.NORMAL))
     result = execute_plan(decision_plan, prompt, providers)
     (
-        task,
+        branch,
         complexity,
         needs_private_context,
         query,
@@ -303,19 +307,22 @@ def identify_task(
         answer,
         result_mode,
         calendar_goal,
-    ) = _parse_intent(result.text)
+    ) = _parse_decision(result.text)
     if run_state and run_state.get("memory_processed") and memory_request is not None:
         raise ProviderError("本轮记忆已经处理，不能重复提交记忆请求。")
     source = context.source
-    if task is TaskType.EMAIL and source not in (Source.EMAIL, Source.CALENDAR):
+    if branch is DecisionBranch.EMAIL and source not in (Source.EMAIL, Source.CALENDAR):
         source = Source.EMAIL
-    if task is TaskType.CALENDAR and source not in (Source.EMAIL, Source.CALENDAR):
+    if branch is DecisionBranch.CALENDAR and source not in (
+        Source.EMAIL,
+        Source.CALENDAR,
+    ):
         source = Source.CALENDAR
-    return IdentifiedTask(
-        task=task,
+    return StepDecision(
+        branch=branch,
         context=replace(context, source=source, complexity=complexity),
         needs_private_context=needs_private_context,
-        classifier=result.provider,
+        provider=result.provider,
         used_fallback=result.used_fallback,
         email_query=query,
         memory_request=memory_request,

@@ -1,38 +1,34 @@
-"""Local calendar persistence; one operation interface can later use Google Calendar."""
+"""Persist Google reminder snapshots and delivery attempts, without calendar CRUD."""
 
 import fcntl
 import json
 import os
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from uuid import uuid4
 
 from features.calendar_actions import (
     CalendarBusyError,
     CalendarError,
     CalendarItem,
-    CalendarRequest,
-    CalendarResult,
     aware_time,
-    validate_event,
 )
 
 
-class LocalCalendarStore:
-    """Lazy SQLite store. Constructing it neither reads nor creates a database."""
+class ReminderLedger:
+    """Lazy delivery ledger; the caller supplies a per-Google-calendar path.
 
-    def __init__(self, path: Path | None = None):
-        self.path = (
-            path
-            if path is not None
-            else (Path.home() / ".hermes/profiles/hw3-local/calendar.sqlite3")
-        )
+    Only the current version 2 ledger schema is supported.
+    Event payloads are synchronized snapshots, never editable calendar records.
+    """
+
+    def __init__(self, path: Path):
+        self.path = path
 
     @contextmanager
-    def _connection(self):
+    def _connection(self) -> Generator[sqlite3.Connection, None, None]:
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             with self.path.with_suffix(".lock").open("a") as lock:
@@ -41,7 +37,7 @@ class LocalCalendarStore:
                     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except BlockingIOError:
                     raise CalendarBusyError(
-                        "日历正在处理其他操作，请稍后重试。"
+                        "提醒账本正在处理其他操作，请稍后重试。"
                     ) from None
                 if not self.path.exists():
                     fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
@@ -54,29 +50,29 @@ class LocalCalendarStore:
                         if conn.execute(
                             "SELECT name FROM sqlite_master WHERE type='table'"
                         ).fetchone():
-                            raise CalendarError("日历数据库格式不受支持。")
+                            raise CalendarError("提醒账本格式不受支持。")
                         conn.executescript("""
                             CREATE TABLE events (
-                                id TEXT PRIMARY KEY, version INTEGER NOT NULL,
+                                id TEXT PRIMARY KEY, version TEXT NOT NULL,
                                 start REAL NOT NULL, payload TEXT NOT NULL
                             );
                             CREATE INDEX events_start ON events(start);
                             CREATE TABLE reminders (
-                                event_id TEXT NOT NULL, version INTEGER NOT NULL,
+                                event_id TEXT NOT NULL, version TEXT NOT NULL,
                                 due REAL NOT NULL, status TEXT NOT NULL,
                                 PRIMARY KEY(event_id, version)
                             );
                             CREATE INDEX reminders_due ON reminders(status, due);
-                            PRAGMA user_version=1;
+                            PRAGMA user_version=2;
                         """)
                         conn.commit()
-                    elif version != 1:
-                        raise CalendarError("日历数据库版本不受支持。")
+                    elif version != 2:
+                        raise CalendarError("提醒账本版本不受支持。")
                     yield conn
                 finally:
                     conn.close()
         except (OSError, sqlite3.Error):
-            raise CalendarError("本地日历无法读写，请检查数据库及目录权限。") from None
+            raise CalendarError("提醒账本无法读写，请检查数据库及目录权限。") from None
 
     @staticmethod
     def _item(row) -> CalendarItem:
@@ -88,120 +84,7 @@ class LocalCalendarStore:
                 raise ValueError("Mismatched time")
             return item
         except (TypeError, ValueError, KeyError, OverflowError):
-            raise CalendarError("本地日历记录损坏，本次操作未执行。") from None
-
-    def execute(
-        self, request: CalendarRequest, *, now: datetime | None = None
-    ) -> CalendarResult:
-        # Revalidate nested dictionaries in case a caller modified them after construction.
-        try:
-            request = CalendarRequest.from_dict(request.to_dict())
-        except (ValueError, TypeError, KeyError, OverflowError):
-            raise CalendarError("日历操作参数无效，本次操作未执行。") from None
-        current = now if now is not None else datetime.now(UTC)
-        if current.utcoffset() is None:
-            raise CalendarError("当前时间须包含时区。")
-        with self._connection() as conn:
-            if request.operation == "query":
-                query = request.query
-                items = [
-                    self._item(row)
-                    for row in conn.execute(
-                        "SELECT * FROM events WHERE start >= ? AND start < ? ORDER BY start, id",
-                        (
-                            query.starts_after.timestamp(),
-                            query.starts_before.timestamp(),
-                        ),
-                    )
-                ]
-                items = [
-                    item
-                    for item in items
-                    if item.status == "confirmed"
-                    and (
-                        query.text is None
-                        or query.text.casefold() in item.title.casefold()
-                    )
-                ]
-                return CalendarResult(
-                    "query",
-                    items[: query.limit],
-                    query,
-                    len(items) > query.limit,
-                    source_label="本地日历",
-                )
-
-            conn.execute("BEGIN IMMEDIATE")
-            if request.operation == "create":
-                fields = request.changes
-                event_id, version, status = uuid4().hex, 1, "confirmed"
-                previous_reminder = None
-                old = None
-            else:
-                row = conn.execute(
-                    "SELECT * FROM events WHERE id = ?", (request.event_id,)
-                ).fetchone()
-                if row is None:
-                    raise CalendarError("日程不存在，请重新查询。")
-                old = self._item(row)
-                if old.version != request.version:
-                    raise CalendarError("日程已被修改，请重新查询后再操作。")
-                if old.status == "cancelled":
-                    raise CalendarError("日程已取消，无需再次操作。")
-                previous_reminder = conn.execute(
-                    "SELECT * FROM reminders WHERE event_id=? AND version=?",
-                    (old.event_id, int(old.version)),
-                ).fetchone()
-                fields = {**old.fields(), **(request.changes or {})}
-                event_id, version = old.event_id, row["version"] + 1
-                status = "cancelled" if request.operation == "cancel" else "confirmed"
-            try:
-                fields = validate_event(fields)
-            except (ValueError, TypeError, KeyError, OverflowError):
-                raise CalendarError("日程字段或时间无效，本次操作未保存。") from None
-            start = aware_time(fields["starts_at"])
-            if status != "cancelled" and start <= current:
-                raise CalendarError("创建或修改后的日程须在未来，请明确日期和时间。")
-            item = CalendarItem(
-                event_id=event_id, version=str(version), status=status, **fields
-            )
-            conn.execute(
-                "INSERT OR REPLACE INTO events VALUES (?, ?, ?, ?)",
-                (
-                    event_id,
-                    version,
-                    start.timestamp(),
-                    json.dumps(item.__dict__, ensure_ascii=False),
-                ),
-            )
-            conn.execute(
-                "UPDATE reminders SET status='cancelled' WHERE event_id=? AND status='pending'",
-                (event_id,),
-            )
-            reminder = item.reminder_minutes
-            if status == "confirmed" and reminder is not None:
-                due = start.astimezone(UTC) - timedelta(minutes=reminder)
-                same_schedule = old is not None and (
-                    aware_time(old.starts_at).timestamp() == start.timestamp()
-                    and old.reminder_minutes == reminder
-                )
-                reminder_status = (
-                    previous_reminder["status"]
-                    if same_schedule and previous_reminder
-                    else "pending"
-                )
-                if due < current and not same_schedule:
-                    raise CalendarError(
-                        "提醒时间已经过去，请缩短提前量或调整日程时间。"
-                    )
-                if reminder_status == "sending":
-                    reminder_status = "unknown"
-                conn.execute(
-                    "INSERT INTO reminders VALUES (?, ?, ?, ?)",
-                    (event_id, version, due.timestamp(), reminder_status),
-                )
-            conn.commit()
-            return CalendarResult(request.operation, [item], source_label="本地日历")
+            raise CalendarError("提醒账本记录损坏，本次操作未执行。") from None
 
     def reconcile_external(
         self,
@@ -295,8 +178,8 @@ class LocalCalendarStore:
     ) -> dict[str, int]:
         """Claim before sending. Uncertain sends/crashes are never automatically replayed.
 
-        The same lock protects calendar writes and a dispatch batch, so a successful
-        reschedule/cancellation cannot race a stale reminder during dispatch.
+        The same lock protects snapshot reconciliation and dispatch. Google events
+        are rechecked by the caller-provided verifier before each delivery claim.
         """
         from adapters.messaging import DeliveryError, MessageContentError
 

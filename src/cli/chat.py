@@ -1,4 +1,4 @@
-"""结合近期对话回答问题、按条件查询 Gmail，或修改长期偏好。"""
+"""结合近期对话回答问题、查询 Gmail、操作 Google 日历或修改长期偏好。"""
 
 import argparse
 from pathlib import Path
@@ -8,6 +8,7 @@ from app.assistant import ToolCheckpointError, handle_message
 from app.conversation import (
     Conversation,
     ConversationError,
+    ConversationVersionError,
     conversation_session,
     save_conversation,
 )
@@ -50,7 +51,6 @@ def main(argv: list[str] | None = None) -> None:
             reply = handle_message(
                 args.message,
                 providers,
-                classifiers=providers,
                 context=context,
                 read_emails=query_gmail,
                 update_memory=update_user_memory,
@@ -61,6 +61,8 @@ def main(argv: list[str] | None = None) -> None:
                 conversation=conversation,
                 persist_state=lambda state: save_conversation(path, state),
             )
+    except ConversationVersionError as error:
+        parser.exit(1, f"{error}\n本轮未调用模型或执行工具，原会话文件未修改。\n")
     except ConversationError as error:
         confirmed = error.reply if isinstance(error, ToolCheckpointError) else reply
         if confirmed is not None:
@@ -80,9 +82,9 @@ def main(argv: list[str] | None = None) -> None:
     except ValueError as error:
         parser.error(str(error))
     print(
-        f"决策模型：{reply.intent.classifier.value}（回退：{reply.intent.used_fallback}）"
+        f"决策模型：{reply.decision.provider.value}（回退：{reply.decision.used_fallback}）"
     )
-    print(f"任务类型：{reply.intent.task.value}")
+    print(f"首步分支：{reply.decision.branch.value}")
     print(
         f"决策步数：{reply.decision_count}；工具次数：{reply.tool_count}；结束原因：{reply.stop_reason}"
     )
