@@ -235,3 +235,7 @@ client_secret*.json
 /Task.md
 /debugging.md
 /.env.example
+
+# Retired compatibility launchers and local synthetic calendar fixtures.
+/examples/
+/config/calendar.example.json

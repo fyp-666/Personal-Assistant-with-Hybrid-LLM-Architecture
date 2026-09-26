@@ -31,7 +31,10 @@ def _briefing(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "file",
         type=Path,
-        help="Calendar JSON file; see config/calendar.example.json for the format",
+        help=(
+            "Calendar JSON file containing target_date, timezone, and events "
+            "(title, starts_at, duration_minutes, location)"
+        ),
     )
     parser.add_argument(
         "--date", help="Override the target date from the file, in YYYY-MM-DD format"
