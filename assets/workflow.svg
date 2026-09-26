@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="1280" viewBox="0 0 900 1280" role="img" aria-labelledby="title desc">
+<title id="title">Agent decision and execution workflow</title><desc id="desc">A bounded branch-and-loop workflow with provider policy, structured decisions, an NVIDIA handoff, validated tools, checkpoints, direct results, and a continue loop. Failure handling preserves confirmed outcomes.</desc>
+<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L8,4 L0,8 Z" fill="#6e7781"/></marker></defs>
+<defs><mask id="label-gaps" maskUnits="userSpaceOnUse" x="0" y="0" width="900" height="1280"><rect width="900" height="1280" fill="white"/><rect x="454.25" y="399" width="51.5" height="22" rx="2" fill="black"/><rect x="398.0" y="562" width="104.0" height="22" rx="2" fill="black"/><rect x="125.25" y="524" width="81.5" height="22" rx="2" fill="black"/><rect x="71.0" y="221" width="194.0" height="22" rx="2" fill="black"/><rect x="707.0" y="496" width="134.0" height="22" rx="2" fill="black"/><rect x="660.25" y="329" width="171.5" height="22" rx="2" fill="black"/><rect x="61.5" y="117" width="179.0" height="22" rx="2" fill="black"/><rect x="420.5" y="1019" width="59.0" height="22" rx="2" fill="black"/></mask></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#24292f} .main{font-size:18px} .detail{font-size:16px;fill:#57606a} .edge{font-size:15px;fill:#57606a}</style>
+<polyline mask="url(#label-gaps)" points="450,68 450,106" fill="none" stroke="#6e7781" stroke-width="1.6" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline mask="url(#label-gaps)" points="450,182 450,210" fill="none" stroke="#6e7781" stroke-width="1.6" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline mask="url(#label-gaps)" points="450,286 450,318" fill="none" stroke="#6e7781" stroke-width="1.6" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline mask="url(#label-gaps)" points="450,394 450,422" fill="none" stroke="#6e7781" stroke-width="1.6" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline mask="url(#label-gaps)" points="450,550 450,594" fill="none" stroke="#6e7781" stroke-width="1.6" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline mask="url(#label-gaps)" points="450,666 450,698" fill="none" stroke="#6e7781" stroke-width="1.6" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline mask="url(#label-gaps)" points="450,770 450,798" fill="none" stroke="#6e7781" stroke-width="1.6" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline mask="url(#label-gaps)" points="450,858 450,884" fill="none" stroke="#6e7781" stroke-width="1.6" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline mask="url(#label-gaps)" points="450,1012 450,1046" fill="none" stroke="#6e7781" stroke-width="1.6" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline mask="url(#label-gaps)" points="450,1100 450,1140" fill="none" stroke="#6e7781" stroke-width="1.6" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline mask="url(#label-gaps)" points="360,486 166,486 166,594" fill="none" stroke="#6e7781" stroke-width="1.6" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline mask="url(#label-gaps)" points="66,630 42,630 42,248 295,248" fill="none" stroke="#6e7781" stroke-width="1.6" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline mask="url(#label-gaps)" points="540,486 878,486 878,1165 605,1165" fill="none" stroke="#6e7781" stroke-width="1.6" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline mask="url(#label-gaps)" points="360,948 12,948 12,144 295,144" fill="none" stroke="#6e7781" stroke-width="1.6" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline mask="url(#label-gaps)" points="605,356 762,356 762,390" fill="none" stroke="#6e7781" stroke-width="1.6" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="315" y="24" width="270" height="44" rx="22.0" fill="#f6f8fa" stroke="#8c959f" stroke-width="1.4"/>
+<text x="450.0" y="52.0" text-anchor="middle" class="main">CLI / Telegram request</text>
+<rect x="295" y="106" width="310" height="76" rx="3" fill="#f6f8fa" stroke="#8c959f" stroke-width="1.4"/>
+<text x="450.0" y="136.0" text-anchor="middle" class="main">Build request context</text>
+<text x="450.0" y="162.0" text-anchor="middle" class="detail">History, preferences, time, tools</text>
+<rect x="295" y="210" width="310" height="76" rx="3" fill="#f6f8fa" stroke="#8c959f" stroke-width="1.4"/>
+<text x="450.0" y="240.0" text-anchor="middle" class="main">Select permitted model</text>
+<text x="450.0" y="266.0" text-anchor="middle" class="detail">Active provider, privacy, limits</text>
+<rect x="295" y="318" width="310" height="76" rx="3" fill="#f0f3f6" stroke="#778899" stroke-width="1.4"/>
+<text x="450.0" y="348.0" text-anchor="middle" class="main">One model decision via Hermes</text>
+<text x="450.0" y="374.0" text-anchor="middle" class="detail">Validate structured JSON</text>
+<polygon points="450,422.0 540.0,486 450,550.0 360.0,486" fill="#f0f3f6" stroke="#778899" stroke-width="1.4"/>
+<text x="450" y="479" text-anchor="middle" class="main">Decision</text>
+<text x="450" y="504" text-anchor="middle" class="main">branch</text>
+<rect x="66" y="594" width="200" height="72" rx="3" fill="#f4f2f6" stroke="#93899e" stroke-width="1.4"/>
+<text x="166.0" y="622.0" text-anchor="middle" class="main">Authorize NVIDIA</text>
+<text x="166.0" y="648.0" text-anchor="middle" class="detail">reasoning handoff</text>
+<rect x="650" y="390" width="224" height="74" rx="37.0" fill="#f6f8fa" stroke="#8c959f" stroke-width="1.4"/>
+<text x="762.0" y="419.0" text-anchor="middle" class="main">Stop and report</text>
+<text x="762.0" y="445.0" text-anchor="middle" class="detail">Confirmed outcomes only</text>
+<rect x="295" y="594" width="310" height="72" rx="3" fill="#f6f8fa" stroke="#8c959f" stroke-width="1.4"/>
+<text x="450.0" y="622.0" text-anchor="middle" class="main">Validate tool request</text>
+<text x="450.0" y="648.0" text-anchor="middle" class="detail">Goal, arguments, ID / version</text>
+<rect x="295" y="698" width="310" height="72" rx="3" fill="#f6f8fa" stroke="#8c959f" stroke-width="1.4"/>
+<text x="450.0" y="726.0" text-anchor="middle" class="main">Execute business tool</text>
+<text x="450.0" y="752.0" text-anchor="middle" class="detail">Gmail / Google Calendar</text>
+<rect x="295" y="798" width="310" height="60" rx="3" fill="#f6f8fa" stroke="#8c959f" stroke-width="1.4"/>
+<text x="450.0" y="834.0" text-anchor="middle" class="main">Checkpoint confirmed result</text>
+<polygon points="450,884.0 540.0,948 450,1012.0 360.0,948" fill="#f0f3f6" stroke="#778899" stroke-width="1.4"/>
+<text x="450" y="941" text-anchor="middle" class="main">Requested</text>
+<text x="450" y="966" text-anchor="middle" class="main">result mode</text>
+<rect x="295" y="1046" width="310" height="54" rx="3" fill="#f6f8fa" stroke="#8c959f" stroke-width="1.4"/>
+<text x="450.0" y="1079.0" text-anchor="middle" class="main">Render confirmed result</text>
+<rect x="295" y="1140" width="310" height="50" rx="25.0" fill="#f0f4f2" stroke="#819389" stroke-width="1.4"/>
+<text x="450.0" y="1171.0" text-anchor="middle" class="main">Save conversation and reply</text>
+<text x="480" y="412" text-anchor="middle" class="edge">Valid</text>
+<text x="450" y="575" text-anchor="middle" class="edge">Tool request</text>
+<text x="166" y="537" text-anchor="middle" class="edge">Reasoning</text>
+<text x="168" y="234" text-anchor="middle" class="edge">Same context and budgets</text>
+<text x="774" y="509" text-anchor="middle" class="edge">Answer / clarify</text>
+<text x="746" y="342" text-anchor="middle" class="edge">Invalid / unavailable</text>
+<text x="151" y="130" text-anchor="middle" class="edge">continue: new evidence</text>
+<text x="450" y="1032" text-anchor="middle" class="edge">direct</text>
+<line x1="85" y1="1220" x2="815" y2="1220" stroke="#d0d7de"/>
+<text x="450" y="1243" text-anchor="middle" class="detail">Limits, blocked operations, and failed or unconfirmed work use the same stop policy:</text>
+<text x="450" y="1267" text-anchor="middle" class="detail">keep confirmed outcomes, report what happened, and never replay writes automatically.</text>
+</svg>

@@ -21,31 +21,27 @@ Built in Python with an explicit **branch-and-loop workflow**: the model decides
 
 The same loop handles answers, tool use, and reasoning handoffs. It combines conversation context, saved preferences, the current time, and tool contracts. Each iteration produces one structured decision, validated by the application.
 
-```mermaid
-flowchart TB
-    Input["Telegram / CLI"] --> Context["Build context<br/>Apply routing policy"]
-    Context --> Decide["Active model decides<br/>GPT / NVIDIA / Local"]
-    Decide -->|Answer or clarify| Reply["Deliver reply"]
-    Decide -->|Use a tool| Tool["Validate and execute<br/>Gmail / Google Calendar"]
-    Decide -->|Deeper reasoning| Reason["Authorize NVIDIA handoff"]
-    Reason -->|Same context| Decide
-    Tool -->|continue: new evidence| Decide
-    Tool -->|direct: confirmed result| Reply
-
-    classDef default fill:#f6f8fa,stroke:#8c959f,color:#1f2328
-    classDef model fill:#e8f0fe,stroke:#2563eb,color:#172554
-    classDef reasoning fill:#f3e8ff,stroke:#9333ea,color:#581c87
-    classDef output fill:#dcfce7,stroke:#16a34a,color:#14532d
-    class Decide model
-    class Reason reasoning
-    class Reply output
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/workflow-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="assets/workflow.svg">
+  <img alt="Agent decision and execution workflow" src="assets/workflow.svg">
+</picture>
 
 - **Tool loop:** `continue` feeds results back into the decision; `direct` delivers confirmed results immediately. The agent can look up events, resolve an approximate description, and request a validated change.
 - **Reasoning branch:** `delegate_reasoning` hands the next decision to NVIDIA while preserving context, tool results, the original calendar goal, and remaining budgets. NVIDIA can use the same tools.
 - **Execution limits:** each request allows 5 decisions, 4 business-tool calls, one calendar write, one preference update, and one reasoning handoff. A 240-second soft deadline is checked between steps. Confirmed actions are retained if later work fails; writes are never replayed automatically.
 
-Preference editing runs only when needed, with a separate model call and validated atomic save. Calendar reminders run in an independent process without model calls.
+Preference editing runs only when needed, with a separate model call and validated atomic save. A failure to save a preference does not cancel independent work. Limits, blocked operations, and failed or unconfirmed work share the same stop policy shown above.
+
+**Independent reminder worker**
+
+Calendar reminders run separately from the interactive decision loop, without model calls.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/reminder-workflow-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="assets/reminder-workflow.svg">
+  <img alt="Independent calendar reminder workflow" src="assets/reminder-workflow.svg">
+</picture>
 
 ### Model roles and continuity
 
