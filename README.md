@@ -1,6 +1,6 @@
 # Personal Assistant with Hybrid LLM Architecture
 
-A self-hosted, single-user AI agent for **Gmail, Google Calendar, and Telegram**. It turns natural-language requests into validated actions, remembers conversation context and user preferences, and combines GPT, NVIDIA Nemotron reasoning, and local inference for private requests.
+A self-hosted, single-user AI agent for **Gmail, Google Calendar, and Telegram**. It turns natural-language requests into validated actions, remembers conversation context and user preferences, and combines GPT, NVIDIA Nemotron reasoning, and local inference with persistent model selection across follow-ups.
 
 Built in Python with an explicit **branch-and-loop workflow**: the model decides what to do next; application code controls what can actually execute. Runs from the terminal or a Telegram private chat on WSL2 / Linux.
 
@@ -10,7 +10,7 @@ Built in Python with an explicit **branch-and-loop workflow**: the model decides
 | --- | --- |
 | Email search, summaries, and follow-ups | “Summarize last week's emails with interview in the subject.” → “What does the second one ask me to do?” |
 | Calendar management | “Create a 30-minute discussion tomorrow at 4 PM.” → “Move it to 5 PM.” → “Cancel it.” |
-| Adaptive reasoning | Difficult planning or cross-source analysis can transfer to NVIDIA Nemotron within the same loop. |
+| Adaptive reasoning | Delegate difficult planning to NVIDIA Nemotron, then refine the answer with the same model across follow-ups. |
 | Multi-step tool use | “Check tomorrow for project reviews; if there are none, check the following day.” |
 | Persistent preferences | “I usually prefer short explanations.” → applied across later conversations |
 | Scheduled notifications | Telegram reminders for calendar events, plus a separate daily email briefing command |
@@ -19,58 +19,60 @@ Built in Python with an explicit **branch-and-loop workflow**: the model decides
 
 ## Workflow
 
-```mermaid
-flowchart TD
-    Input["CLI or authorized Telegram message"] --> Context["Build context from conversation and tool results,<br/>saved preferences, request time, and tool contracts"]
-    Context --> Budget{"Decision budget available?"}
-    Budget -->|Yes| Route["Deterministic inference policy<br/>New conversation: GPT; reuse active model<br/>Delegated: NVIDIA Nemotron<br/>Provider failures: permitted fallback<br/>Private or offline: Local only"]
-    Route --> Decide["One model decision via Hermes<br/>Parse and validate structured JSON"]
-    Decide -->|Invalid or unavailable| Stop["Stop and report actual outcomes<br/>Preserve confirmed receipts; never replay writes"]
-    Decide -->|Valid| Memory["Optional preference edit, at most once<br/>Model proposal + validated atomic save"]
-    Memory --> Branch{"Decision branch"}
-    Branch -->|Answer or clarify| Finish["Finalize and deliver reply<br/>Save final state when possible; report save failures"]
-    Branch -->|delegate_reasoning| Handoff["Check privacy, provider, and remaining budget<br/>Activate NVIDIA reasoning once per request"]
-    Handoff -->|Allowed| Context
-    Handoff -->|Blocked| Stop
-    Branch -->|Email or calendar tool| Guard["Validate arguments, permissions, goal,<br/>tool budget, and target ID / version"]
-    Guard -->|Allowed| Tool["Execute Gmail read or Google Calendar operation"]
-    Guard -->|Blocked or repeated| Stop
-    Tool -->|Failed or unconfirmed| Stop
-    Tool -->|Confirmed| Checkpoint["Update working context and checkpoint state"]
-    Checkpoint -->|Saved| Mode{"Requested result mode"}
-    Checkpoint -->|Save failed| Stop
-    Mode -->|direct| Render["Render confirmed tool results"]
-    Render --> Finish
-    Mode -->|continue| Context
-    Budget -->|No| Stop
-    Stop --> Finish
+The same loop handles answers, tool use, and reasoning handoffs. It combines conversation context, saved preferences, the current time, and tool contracts. Each iteration produces one structured decision, validated by the application.
 
-    subgraph Reminders["Independent reminder process - no model calls"]
-        Tick["Periodic check"] --> Sync["Sync Google Calendar<br/>with SQLite delivery ledger"]
-        Sync --> Due["Recheck due events and versions<br/>Claim and record delivery attempts"]
-        Due -->|Eligible| Send["Send through Hermes to Telegram<br/>Retain confirmed / uncertain outcomes"]
-    end
+```mermaid
+flowchart TB
+    Input["Telegram / CLI"] --> Context["Build context<br/>Apply routing policy"]
+    Context --> Decide["Active model decides<br/>GPT / NVIDIA / Local"]
+    Decide -->|Answer or clarify| Reply["Deliver reply"]
+    Decide -->|Use a tool| Tool["Validate and execute<br/>Gmail / Google Calendar"]
+    Decide -->|Deeper reasoning| Reason["Authorize NVIDIA handoff"]
+    Reason -->|Same context| Decide
+    Tool -->|continue: new evidence| Decide
+    Tool -->|direct: confirmed result| Reply
+
+    classDef default fill:#f6f8fa,stroke:#8c959f,color:#1f2328
+    classDef model fill:#e8f0fe,stroke:#2563eb,color:#172554
+    classDef reasoning fill:#f3e8ff,stroke:#9333ea,color:#581c87
+    classDef output fill:#dcfce7,stroke:#16a34a,color:#14532d
+    class Decide model
+    class Reason reasoning
+    class Reply output
 ```
 
-`direct` finishes with a program-rendered result; `continue` returns new evidence to the same decision node. The model can query candidate events, resolve an approximate description against real results, and then request an authorized update or cancellation. For difficult multi-constraint planning or synthesis, `delegate_reasoning` transfers the next decision to NVIDIA Nemotron with the same evidence and state. There is no separate classifier or mandatory final-response model. Optional preference editing uses its own model call; failure to save a preference does not cancel independent work.
+- **Tool loop:** `continue` feeds results back into the decision; `direct` delivers confirmed results immediately. The agent can look up events, resolve an approximate description, and request a validated change.
+- **Reasoning branch:** `delegate_reasoning` hands the next decision to NVIDIA while preserving context, tool results, the original calendar goal, and remaining budgets. NVIDIA can use the same tools.
+- **Execution limits:** each request allows 5 decisions, 4 business-tool calls, one calendar write, one preference update, and one reasoning handoff. A 240-second soft deadline is checked between steps. Confirmed actions are retained if later work fails; writes are never replayed automatically.
 
-Each request allows **5 decisions, 4 business-tool calls, one calendar write, one preference update, and one reasoning handoff**, with a 240-second soft deadline checked between steps.
+Preference editing runs only when needed, with a separate model call and validated atomic save. Calendar reminders run in an independent process without model calls.
+
+### Model roles and continuity
+
+| Model | When it runs | On provider failure |
+| --- | --- | --- |
+| **GPT** | Starts new public conversations and handles routine reasoning and tools | Fall back to Local |
+| **NVIDIA Nemotron** | Takes an approved reasoning handoff; continues handling follow-up messages | Fall back to GPT, then Local |
+| **Local Gemma / Ollama** | Handles private or offline requests, or cloud-provider fallback | No cloud fallback |
+
+The actual provider of a successful main decision becomes the conversation's `active_provider`. Follow-ups reuse it; a provider fallback is announced and retained. **Privacy rules override every cloud route.** `/new` (or `chat --new`) clears recent context and private mode, restores GPT, and keeps saved preferences and calendar events. Manual model-switch commands are not implemented. Invalid decision JSON stops the request; fallback handles provider failures, not answer repair.
 
 ## Engineering highlights
 
 | Design | Implementation and benefit |
 | --- | --- |
-| **Controlled hybrid inference** | The model may request a reasoning handoff; code authorizes the route. Default GPT → Local; delegated NVIDIA → GPT → Local on provider errors. Privacy constraints always take precedence. |
-| **Validated side effects** | Strict JSON contracts, typed request objects, locked calendar goal, and timezone/DST/duration validation separate model proposals from executable operations. |
-| **Optimistic concurrency control** | Calendar updates and cancellations reread the target and use Google ETags with `If-Match`, rejecting stale writes. |
-| **Persistent context and memory** | Bounded conversation snapshots, checkpoints after successful tools, file locks, and atomic saves. Preference changes use validated add/replace/remove patches and return the actual diff. |
+| **Controlled multi-model execution** | Model-proposed reasoning delegation, deterministic privacy policy, provider fallback, and persistent model selection within one bounded loop. |
+| **Validated side effects** | Strict JSON contracts, typed requests, a locked calendar goal, and timezone/DST/duration checks before execution. |
+| **Optimistic concurrency control** | Calendar updates and cancellations reread the target and use Google ETags with `If-Match` to reject stale writes. |
+| **Context and durable memory** | Bounded conversation snapshots, checkpoints after successful tools, file locks, and atomic saves. Preferences use validated add/replace/remove patches with actual change receipts. |
 | **Accountable delivery** | Bound Telegram user/chat IDs, a single-instance receiver, persistent offsets, and a transactional SQLite reminder ledger. Uncertain sends are not automatically replayed. |
+| **Execution diagnostics** | CLI and Telegram logs expose parsed decision providers, decision/tool counts, and stop reasons for inspecting the executed path. |
 
-### What is implemented here, and what Hermes provides
+### What this project implements
 
-Hermes offers its own tools, memory, and agent workflow. To make those responsibilities easier to study and extend, this project implements the **decision loop, routing policy, context assembly, preference editing, Gmail/Calendar tools, Telegram intake, and reminder state** as small Python modules. These are application implementations, rather than calls into Hermes's built-in autonomous workflow.
+To make agent internals easier to study and extend, this project implements the **decision loop, routing policy, context assembly, preference editing, Gmail/Calendar tools, Telegram intake, and reminder state** as small Python modules. These responsibilities are inspired by capabilities available in Hermes and implemented in the application itself.
 
-[Hermes Agent](https://github.com/NousResearch/hermes-agent) supplies **model access and authentication, isolated provider profiles, and outbound message transport**. The adapter requests single-turn text inference; profiles disable native toolsets, and chat supplies context explicitly. The NVIDIA NIM profile uses `nvidia/nemotron-3-super-120b-a12b` with explicitly enabled reasoning. A handoff keeps the current tool history, original calendar goal, memory outcome, and remaining budgets. NVIDIA can answer or request another validated tool, and remains active for follow-up messages in that conversation. A successful main-model fallback is announced and becomes the active provider. `chat --new` or Telegram `/new` resets the active model to GPT while keeping saved preferences. Manual model-switch commands are not implemented.
+[Hermes Agent](https://github.com/NousResearch/hermes-agent) provides **model access and authentication, isolated provider profiles, and outbound message transport**. The adapter requests single-turn text inference with native toolsets disabled and explicit application context. Python owns the loop and business tools; there is no separate classification stage or mandatory final-response model call.
 
 ## Install and run
 
@@ -108,7 +110,7 @@ hermes profile create hw3-nim --no-skills --no-alias
 cp config/hermes/nim.yaml ~/.hermes/profiles/hw3-nim/config.yaml
 ```
 
-Add `NVIDIA_API_KEY=YOUR_KEY` to `~/.hermes/profiles/hw3-nim/.env`, preserving existing entries, and restrict it with `chmod 600`. The template uses the NVIDIA-hosted API with `reasoning_effort: high`, an 8192-token reasoning budget, and a 12288-token total generation limit shared by thinking and the final decision; see the [NVIDIA API reference](https://docs.api.nvidia.com/nim/reference/nvidia-nemotron-3-super-120b-a12b-infer). The custom profile explicitly enables thinking through NVIDIA's chat-template settings; Hermes returns only the final decision to the application. Reasoning calls have a 120-second run budget and a 150-second process timeout. NIM configuration/transport failures fall back to GPT, then Local; malformed decisions stop rather than being retried by another model.
+Add `NVIDIA_API_KEY=YOUR_KEY` to `~/.hermes/profiles/hw3-nim/.env`, preserving existing entries, and restrict it with `chmod 600`. The template selects **`nvidia/nemotron-3-super-120b-a12b`** through the NVIDIA-hosted API. Its custom endpoint enables thinking with high reasoning effort, an 8192-token reasoning budget, and a 12288-token total generation limit shared by thinking and the final decision ([API reference](https://docs.api.nvidia.com/nim/reference/nvidia-nemotron-3-super-120b-a12b-infer)). NIM calls allow 120 seconds for inference and a 150-second process timeout. Hermes returns the final decision to the application.
 
 Start Ollama in a separate terminal, unless a server is already listening on port 11434:
 
@@ -204,10 +206,9 @@ For a daily email digest, `hybrid-assistant gmail --daily` previews the precedin
 
 ## Privacy and operating scope
 
-- **Default:** relevant conversation, preferences, and retrieved content may reach GPT and, on an authorized reasoning handoff, NVIDIA NIM. `--private` / Telegram `/private` keep inference local but still allow Gmail and Google API access. CLI `--offline` also disables those remote tools.
-- **Reasoning scope:** a handoff consumes a normal decision step and is allowed at most once per request. It does not reset tool/write limits. Simple lookups and routine calendar actions do not require a handoff; an already-active NVIDIA model still handles them. Complexity labels alone do not select a provider.
-- **Conversation state:** CLI and Telegram maintain separate histories. Private mode remains active until `chat --new` or Telegram `/new`; reset also restores GPT and preserves preferences and calendar events. Prompts and fixed receipts are English; model replies can follow an explicit language preference.
-- **Calendar scope:** single timed events and standalone reminders; one write per request. Recurrence, all-day events, invitations, and batch writes are outside scope. Dates default to America/Los_Angeles, with explicit IANA timezones supported.
+- **Cloud access:** relevant conversation, preferences, and retrieved content may reach GPT, or NVIDIA NIM after delegation and throughout subsequent follow-ups. `--private` / Telegram `/private` keep inference local but still allow Gmail and Google API access. CLI `--offline` also disables those remote tools.
+- **Conversation state:** CLI and Telegram maintain separate histories. Private mode remains active until a new conversation is started. Prompts and fixed receipts are English; model replies can follow an explicit language preference.
+- **Calendar scope:** single timed events and standalone reminders; one write per request. Recurrence, all-day events, invitations, and batch writes are outside scope. Dates default to America/Los_Angeles, with explicit IANA timezones supported. Queries filter event start times; this is not a complete free/busy solver.
 - **Delivery semantics:** Telegram intake records offsets before execution; interrupted requests may be left unfinished. Reminders expire after 15 minutes of lateness. Unknown outcomes require inspection, rather than automatic replay; delivery is not exactly-once.
 
 ## Code map and development
