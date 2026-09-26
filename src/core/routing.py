@@ -60,9 +60,18 @@ class RoutePlan:
     reason: str
 
 
-def plan_route(context: RequestContext) -> RoutePlan:
+def plan_route(
+    context: RequestContext,
+    *,
+    reasoning: bool = False,
+    active_provider: Provider = Provider.OPENAI,
+) -> RoutePlan:
     """Choose permitted model routes from trusted metadata, without model calls."""
-    # Check cloud restrictions first; offline wins when both restrictions apply.
+    if not isinstance(active_provider, Provider):
+        raise TypeError("active_provider must be a Provider value")
+    if type(reasoning) is not bool:
+        raise TypeError("reasoning must be a bool")
+    # Check cloud restrictions before any program-approved reasoning delegation.
     if context.offline:
         return RoutePlan(
             primary=Provider.LOCAL,
@@ -79,4 +88,10 @@ def plan_route(context: RequestContext) -> RoutePlan:
 
     if context.privacy is Privacy.SENSITIVE:
         return RoutePlan(Provider.LOCAL, (), "explicit_private")
+    if active_provider is Provider.LOCAL:
+        return RoutePlan(Provider.LOCAL, (), "conversation_local")
+    if reasoning or active_provider is Provider.NIM:
+        return RoutePlan(
+            Provider.NIM, (Provider.OPENAI, Provider.LOCAL), "delegated_reasoning"
+        )
     return RoutePlan(Provider.OPENAI, (Provider.LOCAL,), "default_gpt")

@@ -41,6 +41,8 @@ class AssistantReply:
     decision_count: int = 0
     tool_count: int = 0
     stop_reason: str = "completed"
+    decision_providers: tuple[Provider, ...] = ()  # Successfully parsed decisions only.
+    reasoning_delegated: bool = False
 
 
 class ToolCheckpointError(ConversationError):
@@ -278,7 +280,7 @@ def handle_message(
         raise ValueError("The time limit must be a finite positive number.")
     started = time.monotonic()
     state = conversation if conversation is not None else Conversation()
-    # Only trusted request restrictions persist. A provider fallback is run-local.
+    # Privacy restrictions and active model are separate persisted state.
     if state.private:
         context = replace(context, privacy=Privacy.SENSITIVE)
     if context.privacy is Privacy.SENSITIVE or not context.cloud_allowed:
@@ -292,23 +294,39 @@ def handle_message(
     preferences_dirty = False
     decisions = 0
     tool_calls = 0
+    decision_providers: list[Provider] = []
+    started_with_reasoning = (
+        plan_route(context, active_provider=state.active_provider).primary
+        is Provider.NIM
+    )
+    reasoning_active = started_with_reasoning
+    reasoning_delegated = False
+    reasoning_request = None
+    provider_notices: list[str] = []
+    memory_fallback_provider: Provider | None = None
     write_completed = False
     seen_requests = set()
     outcomes: list[_ToolOutcome] = []
     tool_history: list[dict] = []
 
     def generate_memory(prompt: str) -> str:
-        nonlocal execution_context
+        nonlocal execution_context, memory_fallback_provider
+        route = plan_route(execution_context, active_provider=state.active_provider)
         try:
-            result = execute_plan(plan_route(execution_context), prompt, providers)
+            result = execute_plan(route, prompt, providers)
         except ProviderError:
             execution_context = replace(execution_context, cloud_allowed=False)
+            if route.primary is not Provider.LOCAL:
+                memory_fallback_provider = route.primary
             raise
-        if result.used_fallback:
+        if result.used_fallback and result.provider is Provider.LOCAL:
             execution_context = replace(execution_context, cloud_allowed=False)
+            memory_fallback_provider = route.primary
         return result.text
 
     def finish(text, execution=None, *, stop_reason="completed"):
+        if provider_notices:
+            text = "\n".join(provider_notices) + "\n\n" + text
         if memory is not None:
             text = memory.text + "\n\n" + text
         state.record(
@@ -325,6 +343,8 @@ def handle_message(
             decisions,
             tool_calls,
             stop_reason,
+            tuple(decision_providers),
+            reasoning_delegated,
         )
 
     def stop(detail, reason):
@@ -360,7 +380,26 @@ def handle_message(
             "memory_processed": initial_decision is not None,
             "memory_outcome": asdict(memory) if memory is not None else None,
             "tool_history": tool_history,
+            "reasoning_delegated": reasoning_delegated,
+            "reasoning_active": reasoning_active,
+            "reasoning_request": reasoning_request,
+            "reasoning_available": (
+                not reasoning_delegated
+                and not started_with_reasoning
+                and not reasoning_active
+                and step < max_steps
+                and Provider.NIM in providers
+                and plan_route(
+                    execution_context, active_provider=state.active_provider
+                ).primary
+                is Provider.OPENAI
+            ),
         }
+        requested_provider = plan_route(
+            execution_context,
+            reasoning=reasoning_active,
+            active_provider=state.active_provider,
+        ).primary
         decisions += 1
         try:
             decision = decide_next_step(
@@ -371,6 +410,7 @@ def handle_message(
                 now=current_time,
                 user_preferences=preferences,
                 run_state=run_state,
+                reasoning=reasoning_active,
             )
         except ProviderError:
             if initial_decision is None:
@@ -379,8 +419,40 @@ def handle_message(
                 "The next model decision is unavailable. No tools were retried.",
                 "decision_failed",
             )
-        execution_context = decision.context
-        if decision.used_fallback:
+        # A custom decision implementation cannot loosen trusted restrictions.
+        execution_context = replace(
+            decision.context,
+            privacy=(
+                Privacy.SENSITIVE
+                if execution_context.privacy is Privacy.SENSITIVE
+                else decision.context.privacy
+            ),
+            offline=execution_context.offline or decision.context.offline,
+            cloud_allowed=execution_context.cloud_allowed
+            and decision.context.cloud_allowed,
+        )
+        decision_providers.append(decision.provider)
+        # Only a parsed main decision establishes which model actually took over.
+        # This is saved with normal replies and existing tool checkpoints.
+        state.active_provider = decision.provider
+        reasoning_active = decision.provider is Provider.NIM
+        fallback_from = (
+            requested_provider if decision.used_fallback else memory_fallback_provider
+        )
+        if fallback_from is not None and (
+            decision.used_fallback or decision.provider is Provider.LOCAL
+        ):
+            names = {
+                Provider.OPENAI: "GPT",
+                Provider.NIM: "NVIDIA",
+                Provider.LOCAL: "Local",
+            }
+            provider_notices.append(
+                f"{names[fallback_from]} is unavailable. "
+                f"Continuing this conversation with {names[decision.provider]}."
+            )
+            memory_fallback_provider = None
+        if decision.used_fallback and decision.provider is Provider.LOCAL:
             execution_context = replace(execution_context, cloud_allowed=False)
         if initial_decision is None:
             initial_decision = decision
@@ -396,6 +468,53 @@ def handle_message(
                 "Memory was already processed for this request. It was not saved again.",
                 "repeated_memory",
             )
+
+        if decision.branch is DecisionBranch.DELEGATE_REASONING:
+            if reasoning_delegated or started_with_reasoning:
+                return stop(
+                    "Reasoning was already delegated in this request. Further handoffs stopped.",
+                    "repeated_reasoning",
+                )
+            if (
+                plan_route(
+                    execution_context, active_provider=state.active_provider
+                ).primary
+                is not Provider.OPENAI
+                or decision.provider is not Provider.OPENAI
+            ):
+                return stop(
+                    "Reasoning delegation is unavailable under the current local-only policy. No content was sent to NVIDIA.",
+                    "reasoning_forbidden",
+                )
+            if Provider.NIM not in providers:
+                return stop(
+                    "The reasoning provider is unavailable. No handoff was performed.",
+                    "reasoning_unavailable",
+                )
+            if decision.calendar_goal != calendar_goal:
+                return stop(
+                    "The reasoning handoff changed the original calendar goal. It was not performed.",
+                    "goal_changed",
+                )
+            if not decision.delegate_reasoning:
+                return stop(
+                    "The reasoning handoff did not provide a reason. It was not performed.",
+                    "invalid_reasoning",
+                )
+            if step >= max_steps:
+                return stop(
+                    "The decision-step limit leaves no room for a reasoning handoff.",
+                    "step_limit",
+                )
+            if time.monotonic() - started >= max_elapsed_seconds:
+                return stop(
+                    "The request time limit was reached. No reasoning handoff was performed.",
+                    "time_limit",
+                )
+            reasoning_delegated = True
+            reasoning_active = True
+            reasoning_request = decision.delegate_reasoning
+            continue
 
         if decision.branch is DecisionBranch.ANSWER:
             text = decision.answer

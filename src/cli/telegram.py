@@ -103,7 +103,9 @@ def main(argv: list[str] | None = None) -> None:
                 )
                 print(
                     f"initial_branch={reply.decision.branch.value} decision_provider={reply.decision.provider.value} answer_provider={execution} "
-                    f"decision_steps={reply.decision_count} tool_calls={reply.tool_count} stop_reason={reply.stop_reason}",
+                    f"decision_steps={reply.decision_count} tool_calls={reply.tool_count} stop_reason={reply.stop_reason} "
+                    f"decision_path={'>'.join(provider.value for provider in reply.decision_providers)} "
+                    f"reasoning_delegated={reply.reasoning_delegated}",
                     flush=True,
                 )
                 return reply.text

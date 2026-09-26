@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from core.routing import Complexity
+from core.routing import Complexity, Provider
 from features.calendar_actions import MAX_CALENDAR_RESULTS, CalendarItem, CalendarResult
 from features.email import MAX_EMAIL_RESULTS, Email, EmailQuery, EmailSearchResult
 
@@ -98,8 +98,11 @@ class Conversation:
     complexity: Complexity = Complexity.NORMAL
     calendar_result: CalendarResult | None = None
     calendar_items: list[CalendarItem] = field(default_factory=list)
+    active_provider: Provider = Provider.OPENAI
 
     def __post_init__(self):
+        if not isinstance(self.active_provider, Provider):
+            raise TypeError("Invalid active provider.")
         if not self.calendar_items and self.calendar_result is not None:
             self.calendar_items = list(self.calendar_result.items)
         if (
@@ -248,7 +251,7 @@ def load_conversation(path: Path) -> Conversation:
                 "Convert the archive separately, or start a new conversation with chat --new / Telegram /new."
             )
         if (
-            set(data)
+            set(data) - {"active_provider"}
             != {
                 "version",
                 "turns",
@@ -292,6 +295,7 @@ def load_conversation(path: Path) -> Conversation:
             Complexity(data["complexity"]),
             calendar_result,
             calendar_items,
+            Provider(data.get("active_provider", Provider.OPENAI.value)),
         )
     except FileNotFoundError:
         return Conversation()
@@ -326,6 +330,7 @@ def save_conversation(path: Path, conversation: Conversation) -> None:
             ),
             "calendar_items": [asdict(item) for item in conversation.calendar_items],
             "complexity": conversation.complexity.value,
+            "active_provider": conversation.active_provider.value,
         }
         with tempfile.NamedTemporaryFile(
             mode="w", encoding="utf-8", dir=path.parent, delete=False

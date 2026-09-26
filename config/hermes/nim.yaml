@@ -1,7 +1,20 @@
-# Text-only NVIDIA NIM profile. Store NVIDIA_API_KEY in this profile's .env.
+# Text-only NVIDIA reasoning profile. Store NVIDIA_API_KEY in this profile's .env.
+# A custom endpoint forwards the explicit reasoning controls through Hermes.
 model:
-  provider: nvidia
+  provider: custom:nvidia-reasoning
   default: nvidia/nemotron-3-super-120b-a12b
+  max_tokens: 12288
+providers:
+  nvidia-reasoning:
+    api: https://integrate.api.nvidia.com/v1
+    key_env: NVIDIA_API_KEY
+    transport: chat_completions
+    default_model: nvidia/nemotron-3-super-120b-a12b
+    extra_body:
+      reasoning_effort: high
+      chat_template_kwargs:
+        enable_thinking: true
+        reasoning_budget: 8192
 agent:
   coding_context: off
 platform_toolsets:

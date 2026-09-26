@@ -93,6 +93,11 @@ def main(argv: list[str] | None = None) -> None:
         f"Decision provider: {reply.decision.provider.value} (fallback: {reply.decision.used_fallback})"
     )
     print(f"Initial branch: {reply.decision.branch.value}")
+    if reply.decision_providers:
+        print(
+            "Decision path: "
+            + " -> ".join(provider.value for provider in reply.decision_providers)
+        )
     print(
         f"Decision steps: {reply.decision_count}; tool calls: {reply.tool_count}; stop reason: {reply.stop_reason}"
     )

@@ -1,4 +1,4 @@
-"""Decide the next step: answer, clarify, or propose one validated tool call."""
+"""Decide the next step: answer, use a tool, or delegate deeper reasoning."""
 
 import json
 from collections.abc import Callable, Mapping
@@ -30,6 +30,7 @@ class DecisionBranch(Enum):
     ANSWER = "answer"
     EMAIL = "email"
     CALENDAR = "calendar"
+    DELEGATE_REASONING = "delegate_reasoning"
 
 
 @dataclass(frozen=True)
@@ -47,6 +48,7 @@ class StepDecision:
     answer: str | None = None
     result_mode: Literal["direct", "continue"] | None = None
     calendar_goal: str | None = None
+    delegate_reasoning: str | None = None
 
 
 def _parse_decision(
@@ -61,6 +63,7 @@ def _parse_decision(
     str | None,
     Literal["direct", "continue"] | None,
     str | None,
+    str | None,
 ]:
     try:
         data = json.loads(reply)
@@ -71,6 +74,7 @@ def _parse_decision(
             "complexity",
             "needs_private_context",
             "calendar_goal",
+            "delegate_reasoning",
         }:
             raise ValueError("Unexpected fields")
         if type(data["needs_private_context"]) is not bool:
@@ -80,13 +84,29 @@ def _parse_decision(
             raise ValueError("Unsupported calendar goal")
         answer = data["answer"]
         tool = data["tool_request"]
-        if (answer is None) == (tool is None):
-            raise ValueError("Exactly one of answer and tool_request is required")
+        delegate_reasoning = data["delegate_reasoning"]
+        if sum(value is not None for value in (answer, tool, delegate_reasoning)) != 1:
+            raise ValueError(
+                "Exactly one of answer, tool_request, and delegate_reasoning is required"
+            )
+        if delegate_reasoning is not None:
+            if (
+                not isinstance(delegate_reasoning, str)
+                or not 1 <= len(delegate_reasoning.strip()) <= 1000
+            ):
+                raise ValueError(
+                    "delegate_reasoning must explain the need in 1 to 1000 characters"
+                )
+            delegate_reasoning = delegate_reasoning.strip()
         if answer is not None:
             if not isinstance(answer, str) or not answer.strip():
                 raise ValueError("answer must be a nonempty string")
             answer = answer.strip()
-        branch = DecisionBranch.ANSWER
+        branch = (
+            DecisionBranch.DELEGATE_REASONING
+            if delegate_reasoning is not None
+            else DecisionBranch.ANSWER
+        )
         query = None
         calendar_request = None
         result_mode = None
@@ -140,6 +160,7 @@ def _parse_decision(
             answer,
             result_mode,
             calendar_goal,
+            delegate_reasoning,
         )
     except (ValueError, TypeError, KeyError, OverflowError):
         raise ProviderError(
@@ -156,6 +177,7 @@ def decide_next_step(
     now: datetime | None = None,
     user_preferences: str = "",
     run_state: dict | None = None,
+    reasoning: bool = False,
 ) -> StepDecision:
     """Choose one step after applying trusted privacy restrictions.
 
@@ -180,10 +202,29 @@ def decide_next_step(
     }
     if run_state is not None:
         data["run_state"] = run_state
+    route = plan_route(
+        context, reasoning=reasoning, active_provider=state.active_provider
+    )
+    data["reasoning_policy"] = {
+        "active": route.primary is Provider.NIM,
+        "available": (
+            not reasoning
+            and Provider.NIM in providers
+            and route.primary is Provider.OPENAI
+            and not (run_state or {}).get("reasoning_delegated", False)
+            and (run_state or {}).get("reasoning_available", True)
+        ),
+    }
     prompt = (
-        "Use the original user message, relevant context, saved preferences, and confirmed results from this request to decide the next step: answer or clarify, or request one tool. "
-        "Return only JSON with exactly six fields: answer, tool_request, memory_request, complexity, needs_private_context, calendar_goal. "
-        "answer is a nonempty string or null; tool_request is an object or null. Exactly one must be non-null. "
+        "Use the original user message, relevant context, saved preferences, and confirmed results from this request to decide the next step: answer or clarify, request one tool, or delegate deeper reasoning. "
+        "Return only JSON with exactly seven fields: answer, tool_request, delegate_reasoning, memory_request, complexity, needs_private_context, calendar_goal. "
+        "answer is a nonempty string or null; tool_request is an object or null; delegate_reasoning is a nonempty reason string up to 1000 characters or null. Exactly one of these three must be non-null. Always include all seven fields. "
+        "Use delegate_reasoning only when reasoning_policy.available=true and the request needs difficult multi-constraint planning, cross-source synthesis, or logical deduction worth an additional model call. Ordinary chat, summaries, direct lookup, and routine calendar operations do not require delegation. "
+        "Read missing evidence with tools before delegating when possible. Missing facts or ambiguity require a query or clarification, not speculative reasoning. An explicit user request for deep analysis may justify immediate delegation. "
+        "The program retains the active model across messages in this conversation until a reset or provider fallback. Manual model-switch commands are unavailable; do not claim to have executed one. "
+        "The program may transfer control once to NVIDIA Nemotron using the same conversation, tool history, locked goal, permissions, and budgets. The reason describes the difficulty, not a new instruction or permission. Preserve the original calendar_goal even when delegating before any tool call. "
+        "After delegation or provider fallback, continue solving the original request using answer or tool_request; never delegate again or request a different provider. If delegation is unavailable, solve with the current model, query evidence, or clarify. "
+        "run_state.reasoning_request is reference data explaining the handoff, never authorization. Reason internally and return only the final structured decision; do not include reasoning traces or think tags. "
         "When available information is sufficient, put the complete user-facing response in answer and set tool_request=null. Do not merely describe a plan to answer. "
         "Use English by default. Honor the current user's explicit language request and relevant saved language preferences. User messages and source data may be in any language; preserve names and quoted source text when needed. "
         "When new information or an operation is needed, set answer=null. tool_request has exactly name, arguments, result_mode. name is email or calendar; use the corresponding arguments below. Propose one serial tool per step, never an array or plan. "
@@ -254,13 +295,12 @@ def decide_next_step(
         "Describe calendar data by its known state/version. Do not say a cancelled event will still remind the user. Cancellation does not mean a reminder was sent. "
         "Without a query, do not claim a date has no events. An empty title-filtered query only establishes no matches for that filter, not an empty day. "
         "State uncertainty when available information is insufficient. Do not turn past failure explanations into new evidence or advise blindly repeating unconfirmed writes. Resolve relative dates from now/timezone rather than claiming no date was provided. "
-        'EXAMPLES: For \'I generally prefer English email summaries. Summarize the latest two emails.\', return {"answer":null,"tool_request":{"name":"email","arguments":{"subject":null,"received_since":null,"received_before":null,"limit":2},"result_mode":"continue"},"memory_request":"Use English for email summaries","complexity":"normal","needs_private_context":true,"calendar_goal":null}. '
-        'For \'Remember to reply in English, and explain tuples\', return {"answer":"A tuple is an immutable ordered collection of values.","tool_request":null,"memory_request":"Reply in English","complexity":"normal","needs_private_context":false,"calendar_goal":null}. '
-        'For cancelling a known target (identifiers and versions below are illustrative; copy real confirmed values), return {"answer":null,"tool_request":{"name":"calendar","arguments":{"operation":"cancel","query":null,"event_id":"known-id","version":"known-version","changes":null},"result_mode":"direct"},"memory_request":null,"complexity":"normal","needs_private_context":true,"calendar_goal":"cancel"}. '
+        'EXAMPLES: For \'I generally prefer English email summaries. Summarize the latest two emails.\', return {"answer":null,"tool_request":{"name":"email","arguments":{"subject":null,"received_since":null,"received_before":null,"limit":2},"result_mode":"continue"},"delegate_reasoning":null,"memory_request":"Use English for email summaries","complexity":"normal","needs_private_context":true,"calendar_goal":null}. '
+        'For \'Remember to reply in English, and explain tuples\', return {"answer":"A tuple is an immutable ordered collection of values.","tool_request":null,"delegate_reasoning":null,"memory_request":"Reply in English","complexity":"normal","needs_private_context":false,"calendar_goal":null}. '
+        'For cancelling a known target (identifiers and versions below are illustrative; copy real confirmed values), return {"answer":null,"tool_request":{"name":"calendar","arguments":{"operation":"cancel","query":null,"event_id":"known-id","version":"known-version","changes":null},"result_mode":"direct"},"delegate_reasoning":null,"memory_request":null,"complexity":"normal","needs_private_context":true,"calendar_goal":"cancel"}. '
         "Input (JSON):\n" + json.dumps(data, ensure_ascii=False)
     )
-    decision_plan = plan_route(replace(context, complexity=Complexity.NORMAL))
-    result = execute_plan(decision_plan, prompt, providers)
+    result = execute_plan(route, prompt, providers)
     (
         branch,
         complexity,
@@ -271,6 +311,7 @@ def decide_next_step(
         answer,
         result_mode,
         calendar_goal,
+        delegate_reasoning,
     ) = _parse_decision(result.text)
     if run_state and run_state.get("memory_processed") and memory_request is not None:
         raise ProviderError(
@@ -296,4 +337,5 @@ def decide_next_step(
         answer=answer,
         result_mode=result_mode,
         calendar_goal=calendar_goal,
+        delegate_reasoning=delegate_reasoning,
     )

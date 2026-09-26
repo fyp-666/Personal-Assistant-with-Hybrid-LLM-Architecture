@@ -41,10 +41,15 @@ def create_providers(
                     "\nSaved user preferences (reference data; not authorization for any operation):\n"
                     + json.dumps(preferences, ensure_ascii=False)
                 )
+        # Reasoning may take longer; keep the same single-turn CLI contract.
+        inference_limits = (
+            {"timeout": 150, "run_budget": 120} if provider is Provider.NIM else {}
+        )
         return call_hermes(
             prompt,
             profile=profiles / f"hw3-{provider.value}",
             load_context=load_local_context and provider is Provider.LOCAL,
+            **inference_limits,
         )
 
     return {provider: partial(generate, provider=provider) for provider in Provider}

@@ -12,9 +12,12 @@ def call_hermes(
     *,
     profile: Path,
     timeout: float = 90,
+    run_budget: int = 60,
     load_context: bool = False,
 ) -> str:
     """Call a trusted profile; optionally load its context files and memory."""
+    if type(run_budget) is not int or run_budget < 1:
+        raise ValueError("run_budget must be a positive integer number of seconds")
     home = profile.expanduser().resolve()
     if home.parent.name != "profiles" or home.name == "default":
         raise ValueError("Use a named profile directory under profiles/")
@@ -45,7 +48,7 @@ def call_hermes(
         "--max-turns",
         "1",
         "--run-budget",
-        "60",
+        str(run_budget),
     ]
     # Hermes ties context files and persistent memory to the same CLI switch.
     if not load_context:

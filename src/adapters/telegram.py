@@ -131,11 +131,11 @@ def reply_to_update(
         answer = "Only text requests are supported. Images, voice messages, and attachments are not supported."
     elif command == "/new" and reset is not None:
         reset()
-        answer = "Started a new conversation. Recent exchanges and email/calendar snapshots were cleared. Saved preferences and calendar events are unchanged."
+        answer = "Started a new conversation. Recent exchanges and email/calendar snapshots were cleared, and the active model was reset to GPT. Saved preferences and calendar events are unchanged."
     elif command in {"/start", "/help"}:
         answer = (
             "You can chat, search email by date or subject (up to 10 messages), query/create/update/cancel events in the bound Google calendar, or update long-term preferences. Recent exchanges and retrieved email/calendar data provide context. Use /new to start a new conversation while keeping preferences. "
-            "GPT handles requests by default using relevant conversation, email, and calendar context, with Local fallback on connection failure. Use /private followed by your question for local-only processing, which remains active until /new."
+            "New conversations start with GPT. Difficult requests may be delegated to NVIDIA, which remains active for follow-ups. Provider failures switch to an available permitted fallback. Use /new to reset the active model to GPT. Use /private followed by your question for local-only processing, which remains active until /new."
         )
     elif text.startswith("/") and command != "/private":
         answer = "Unknown command. Send a text question, or use /private followed by your question."
