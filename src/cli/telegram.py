@@ -1,4 +1,4 @@
-"""在 WSL 前台接收已绑定的 Telegram 私聊消息；Ctrl+C 停止。"""
+"""Receive bound Telegram private messages in the WSL foreground; Ctrl+C stops the receiver."""
 
 import argparse
 import fcntl
@@ -37,7 +37,9 @@ def main(argv: list[str] | None = None) -> None:
         prog="hybrid-assistant telegram", description=__doc__
     )
     parser.add_argument(
-        "--once", action="store_true", help="回复一条已授权消息后退出，便于测试"
+        "--once",
+        action="store_true",
+        help="Reply to one authorized message and exit, for testing",
     )
     args = parser.parse_args(argv)
     profile = Path.home() / ".hermes/profiles/hw3-local"
@@ -49,7 +51,9 @@ def main(argv: list[str] | None = None) -> None:
             try:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
-                raise TelegramError("已有一个项目接收器在运行，请先停止它。") from None
+                raise TelegramError(
+                    "A project receiver is already running. Stop it first."
+                ) from None
             check_polling_available(config)
             path = state / "offset"
             if path.exists():
@@ -98,8 +102,8 @@ def main(argv: list[str] | None = None) -> None:
                     reply.execution.provider.value if reply.execution else "none"
                 )
                 print(
-                    f"首步分支={reply.decision.branch.value} 决策={reply.decision.provider.value} 回答={execution} "
-                    f"决策步数={reply.decision_count} 工具次数={reply.tool_count} 结束原因={reply.stop_reason}",
+                    f"initial_branch={reply.decision.branch.value} decision_provider={reply.decision.provider.value} answer_provider={execution} "
+                    f"decision_steps={reply.decision_count} tool_calls={reply.tool_count} stop_reason={reply.stop_reason}",
                     flush=True,
                 )
                 return reply.text
@@ -107,7 +111,10 @@ def main(argv: list[str] | None = None) -> None:
             def send(text):
                 send_message(text, target=f"telegram:{config.chat_id}")
 
-            print("Telegram 接收器已启动。仅处理已绑定私聊；Ctrl+C 停止。", flush=True)
+            print(
+                "Telegram receiver started. Only the bound private chat is accepted; Ctrl+C stops the receiver.",
+                flush=True,
+            )
             while True:
                 for update in get_updates(config, offset=offset):
                     next_offset = update["update_id"] + 1
@@ -119,17 +126,17 @@ def main(argv: list[str] | None = None) -> None:
                     if reply_to_update(
                         update, config, handle=handle, send=send, reset=reset
                     ):
-                        print("已回复一条请求。", flush=True)
+                        print("Replied to one request.", flush=True)
                         if args.once:
                             return
     except KeyboardInterrupt:
-        print("接收器已停止。")
+        print("Receiver stopped.")
     except (TelegramError, DeliveryError, ConversationError) as error:
         parser.exit(1, f"{error}\n")
     except (OSError, ValueError):
         parser.exit(
             1,
-            "接收器无法读写本地状态，请检查 Local profile 的 telegram-inbound 目录。\n",
+            "The receiver cannot read or write local state. Check telegram-inbound in the Local profile.\n",
         )
 
 

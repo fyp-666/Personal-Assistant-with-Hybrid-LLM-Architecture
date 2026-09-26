@@ -27,7 +27,7 @@ def load_gmail_credentials() -> tuple[str, str]:
         if not address or not password:
             raise ValueError("Incomplete configuration")
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
-        raise GmailError(f"请先在 {path} 填写 address 和 app_password。") from None
+        raise GmailError(f"Set address and app_password in {path} first.") from None
     return address, password
 
 
@@ -66,7 +66,7 @@ def parse_email(raw: bytes) -> Email:
         try:
             body = part.get_content()
         except (LookupError, UnicodeError):
-            raise GmailError("无法解码这封邮件的正文。") from None
+            raise GmailError("Cannot decode this email body.") from None
         if part.get_content_type() == "text/html":
             parser = _HTMLText()
             parser.feed(body)
@@ -166,17 +166,17 @@ def _read_gmail_emails(
             mailbox.login(address, app_password.replace(" ", ""))
             status, _ = mailbox.select("INBOX", readonly=True)
             if status != "OK":
-                raise GmailError("无法以只读方式打开 Gmail 收件箱。")
+                raise GmailError("Cannot open the Gmail inbox in read-only mode.")
             status, data = mailbox.uid("search", *criteria)
             if status != "OK":
-                raise GmailError("Gmail 邮件搜索失败。")
+                raise GmailError("Gmail message search failed.")
             ids = data[0].split() if data and data[0] else []
             emails = []
             for uid in sorted(ids, key=int, reverse=True):
                 if received_since is not None:
                     status, data = mailbox.uid("fetch", uid, "(INTERNALDATE)")
                     if status != "OK":
-                        raise GmailError("Gmail 邮件收件时间读取失败。")
+                        raise GmailError("Cannot read the Gmail message received time.")
                     received_at = _received_at(data)
                     if not received_since <= received_at < received_before:
                         continue
@@ -184,16 +184,18 @@ def _read_gmail_emails(
                     return emails, True
                 status, data = mailbox.uid("fetch", uid, "(BODY.PEEK[])")
                 if status != "OK":
-                    raise GmailError("Gmail 邮件读取失败。")
+                    raise GmailError("Cannot read the Gmail message.")
                 raw = next((item[1] for item in data if isinstance(item, tuple)), None)
                 if not isinstance(raw, bytes):
-                    raise GmailError("Gmail 未返回邮件正文。")
+                    raise GmailError("Gmail returned no message body.")
                 emails.append(parse_email(raw))
                 if limit is not None and len(emails) >= limit and not check_more:
                     break
             return emails, False
     except (imaplib.IMAP4.error, OSError):
-        raise GmailError("Gmail 连接或登录失败，请检查网络和应用专用密码。") from None
+        raise GmailError(
+            "Gmail connection or login failed. Check the network and app password."
+        ) from None
 
 
 def _imap_date(value: datetime) -> str:
@@ -223,4 +225,4 @@ def _received_at(data: list) -> datetime:
             return datetime.fromtimestamp(time.mktime(local_time), UTC)
     except (ValueError, KeyError, OverflowError, OSError):
         pass
-    raise GmailError("Gmail 返回了无效的收件时间。")
+    raise GmailError("Gmail returned an invalid received time.")

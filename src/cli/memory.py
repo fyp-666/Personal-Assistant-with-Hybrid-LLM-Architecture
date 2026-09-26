@@ -12,8 +12,10 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         prog="hybrid-assistant memory", description=__doc__
     )
-    parser.add_argument("request", help="你希望助手记住、修改或忘记的用户偏好")
-    parser.add_argument("--private", action="store_true", help="仅用 Local 处理偏好")
+    parser.add_argument("request", help="The preference to remember, change, or forget")
+    parser.add_argument(
+        "--private", action="store_true", help="Process preferences using Local only"
+    )
     args = parser.parse_args(argv)
     try:
         result = update_user_memory(
@@ -35,10 +37,13 @@ def main(argv: list[str] | None = None) -> None:
     except ProviderError as error:
         parser.exit(
             1,
-            f"{error}\n本次请求未写入用户档案。\n",
+            f"{error}\nThis request was not saved to the user profile.\n",
         )
     except (OSError, UnicodeError):
-        parser.exit(1, "无法读写用户档案，请检查 USER.md 的权限与 UTF-8 编码。\n")
+        parser.exit(
+            1,
+            "Cannot read or write the user profile. Check USER.md permissions and UTF-8 encoding.\n",
+        )
     except ValueError as error:
         parser.error(str(error))
 

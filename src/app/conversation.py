@@ -17,7 +17,7 @@ MAX_TURNS = 6
 HISTORY_CHARS = 12000
 EMAIL_CHARS = 16000
 EMAIL_HEADER_CHARS = 1000
-_TRUNCATED = "\n[后续邮件正文未保留]"
+_TRUNCATED = "\n[Remaining email body omitted]"
 
 
 class ConversationError(RuntimeError):
@@ -109,7 +109,7 @@ class Conversation:
             or len({item.event_id for item in self.calendar_items})
             != len(self.calendar_items)
         ):
-            raise ValueError("无效的日历上下文。")
+            raise ValueError("Invalid calendar context.")
 
     def apply_results(
         self,
@@ -244,8 +244,8 @@ def load_conversation(path: Path) -> Conversation:
             or data["version"] != CONVERSATION_VERSION
         ):
             raise ConversationVersionError(
-                f"会话格式版本不受支持，仅支持版本 {CONVERSATION_VERSION}；"
-                "请先单独转换存档，或使用 chat --new / Telegram /new 开始新会话。"
+                f"Unsupported conversation format version; only version {CONVERSATION_VERSION} is supported. "
+                "Convert the archive separately, or start a new conversation with chat --new / Telegram /new."
             )
         if (
             set(data)
@@ -297,7 +297,7 @@ def load_conversation(path: Path) -> Conversation:
         return Conversation()
     except (OSError, ValueError, TypeError, KeyError):
         raise ConversationError(
-            "会话文件无法读取；请检查本地文件，或开始新会话。"
+            "Cannot read the conversation file. Check local storage or start a new conversation."
         ) from None
 
 
@@ -335,7 +335,9 @@ def save_conversation(path: Path, conversation: Conversation) -> None:
             json.dump(data, stream, ensure_ascii=False)
         os.replace(temporary, path)
     except OSError:
-        raise ConversationError("会话文件保存失败，本轮结果未保存。") from None
+        raise ConversationError(
+            "Conversation saving failed. The results of this request were not saved."
+        ) from None
     finally:
         if temporary is not None:
             try:

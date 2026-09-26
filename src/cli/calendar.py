@@ -1,4 +1,4 @@
-"""日历授权、简报和提醒检查；日程管理使用 chat 或 Telegram 对话。"""
+"""Calendar authorization, briefings, and reminder checks; use chat or Telegram to manage events."""
 
 import argparse
 import sys
@@ -26,13 +26,20 @@ def _briefing(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         prog="hybrid-assistant calendar",
         description=__doc__,
-        epilog="Google 接入：calendar google --help；提醒检查：calendar reminders --help。",
+        epilog="Google setup: calendar google --help; reminder checks: calendar reminders --help.",
     )
     parser.add_argument(
-        "file", type=Path, help="日历 JSON 文件；格式见 config/calendar.example.json"
+        "file",
+        type=Path,
+        help="Calendar JSON file; see config/calendar.example.json for the format",
     )
-    parser.add_argument("--date", help="覆盖文件中的目标日期，格式 YYYY-MM-DD")
-    parser.add_argument("--timezone", help="覆盖文件中的时区，例如 America/Los_Angeles")
+    parser.add_argument(
+        "--date", help="Override the target date from the file, in YYYY-MM-DD format"
+    )
+    parser.add_argument(
+        "--timezone",
+        help="Override the timezone from the file, for example America/Los_Angeles",
+    )
     args = parser.parse_args(argv)
     try:
         events, target_date, timezone = load_calendar_file(args.file)
@@ -42,69 +49,75 @@ def _briefing(argv: list[str] | None = None) -> None:
             timezone = ZoneInfo(args.timezone)
         selected = select_events_for_date(events, target_date, timezone)
     except (ValueError, ZoneInfoNotFoundError) as error:
-        parser.exit(2, f"日历输入无效：{error}\n")
-    print(f"目标日期：{target_date}（{timezone.key}）")
-    print(f"读取 {len(events)} 条日程，选中 {len(selected)} 条。\n")
+        parser.exit(2, f"Invalid calendar input: {error}\n")
+    print(f"Target date: {target_date} ({timezone.key})")
+    print(f"Read {len(events)} events; selected {len(selected)}.\n")
     print(build_calendar_briefing(selected, create_providers(), timezone=timezone))
 
 
 def _reminders(argv: list[str]) -> None:
     parser = argparse.ArgumentParser(
         prog="hybrid-assistant calendar reminders",
-        description="默认仅预览到期提醒；--send 才实际发送到已绑定的 Telegram。",
-    )
-    parser.add_argument("--send", action="store_true", help="实际发送并记录结果")
-    parser.add_argument(
-        "--watch", action="store_true", help="持续检查，须同时 --send；Ctrl+C 停止"
+        description="Preview due reminders by default; --send delivers them to the bound Telegram chat.",
     )
     parser.add_argument(
-        "--interval", type=int, default=30, help="持续检查间隔秒数，默认30"
+        "--send", action="store_true", help="Send reminders and record their outcomes"
     )
-    parser.add_argument("--status", action="store_true", help="仅查看所有提醒状态计数")
+    parser.add_argument(
+        "--watch",
+        action="store_true",
+        help="Check continuously; requires --send. Ctrl+C stops the checker",
+    )
+    parser.add_argument(
+        "--interval", type=int, default=30, help="Check interval in seconds; default 30"
+    )
+    parser.add_argument(
+        "--status", action="store_true", help="Show reminder status counts only"
+    )
     args = parser.parse_args(argv)
     if not 1 <= args.interval <= 3600:
-        parser.error("interval 须为 1 到 3600 秒。")
+        parser.error("interval must be between 1 and 3600 seconds.")
     if args.watch and not args.send:
-        parser.error("--watch 须同时使用 --send。")
+        parser.error("--watch requires --send.")
     if args.status and (args.send or args.watch):
-        parser.error("--status 不能与发送或持续检查并用。")
+        parser.error("--status cannot be combined with sending or continuous checks.")
     try:
         calendar = create_calendar()
         if args.status:
             labels = {
-                "pending": "待发送",
-                "sending": "发送中待核查",
-                "sent": "已发送",
-                "unknown": "结果不确定待核查",
-                "failed": "发送前失败",
-                "expired": "超出补发窗口",
-                "cancelled": "已取消",
+                "pending": "Pending",
+                "sending": "Sending; verification needed",
+                "sent": "Sent",
+                "unknown": "Unknown; verification needed",
+                "failed": "Failed before sending",
+                "expired": "Expired",
+                "cancelled": "Cancelled",
             }
             status = calendar.reminder_status()
             print(
-                "；".join(
-                    f"{labels.get(key, key)}：{count}" for key, count in status.items()
+                "; ".join(
+                    f"{labels.get(key, key)}: {count}" for key, count in status.items()
                 )
-                or "暂无提醒记录。"
+                or "No reminder records."
             )
             return
         if not args.send:
             items = calendar.preview_due()
-            print("到期待发送提醒预览（未发送；已同步 Google 日历）：")
+            print("Due reminder preview (not sent; synchronized with Google Calendar):")
             print(
                 "\n\n".join(render_calendar_item(item) for item in items)
-                or "暂无到期提醒。"
+                or "No due reminders."
             )
             if calendar.skipped_items:
                 print(
-                    f"另有 {calendar.skipped_items} 条暂不支持的 Google 日程，请在 Google 查看。"
+                    f"{calendar.skipped_items} additional Google events are unsupported. View them in Google Calendar."
                 )
             return
         config = load_telegram_config(Path.home() / ".hermes/profiles/hw3-local")
 
         def deliver(item):
             send_message(
-                "日程提醒\n" + render_calendar_item(item),
+                "Event reminder\n" + render_calendar_item(item),
                 target=f"telegram:{config.chat_id}",
             )
 
@@ -114,24 +127,27 @@ def _reminders(argv: list[str]) -> None:
             except CalendarBusyError:
                 if not args.watch:
                     raise
-                print("日历正在处理其他操作，下次继续检查。", flush=True)
+                print(
+                    "The calendar is busy with another operation. Checking will resume on the next pass.",
+                    flush=True,
+                )
                 time.sleep(args.interval)
                 continue
             print(
-                f"已发送 {result['sent']}；发送前失败 {result['failed']}；"
-                f"结果不确定 {result['unknown']}；超时未补发 {result['expired']}。",
+                f"Sent {result['sent']}; failed before sending {result['failed']}; "
+                f"unknown {result['unknown']}; expired {result['expired']}.",
                 flush=True,
             )
             if calendar.skipped_items:
                 print(
-                    f"另有 {calendar.skipped_items} 条暂不支持的 Google 日程，本批未为它们发送提醒。",
+                    f"{calendar.skipped_items} additional Google events are unsupported; no reminders were sent for them in this batch.",
                     flush=True,
                 )
             if not args.watch:
                 return
             time.sleep(args.interval)
     except KeyboardInterrupt:
-        print("提醒检查已停止。")
+        print("Reminder checker stopped.")
     except (CalendarError, TelegramError, ValueError) as error:
         parser.exit(1, f"{error}\n")
 

@@ -1,1 +1,1 @@
-用户的邮件摘要偏好：使用中文，先说明需要采取的行动，再说明截止时间；偏好“行动：…”和“截止：…”两行格式。原文未给出行动或截止时间时，对应项写“未提及”。
+Email summary preferences: use English, list required actions first and deadlines second, in two lines labeled Action and Deadline. When the source does not specify an action or deadline, write not mentioned for that field.

@@ -1,4 +1,4 @@
-"""结合近期对话回答问题、查询 Gmail、操作 Google 日历或修改长期偏好。"""
+"""Answer with recent context, query Gmail, manage Google Calendar, or update preferences."""
 
 import argparse
 from pathlib import Path
@@ -22,18 +22,23 @@ from features.memory import update_user_memory
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="hybrid-assistant chat", description=__doc__)
     parser.add_argument(
-        "message", help="当前请求；公共会话会共享近期上下文，私人内容请加 --private"
+        "message",
+        help="Current request; public conversations share recent context. Use --private for private content",
     )
     parser.add_argument(
-        "--private", action="store_true", help="输入含私人内容，仅使用本地模型"
+        "--private",
+        action="store_true",
+        help="Process private content using the local model only",
     )
     parser.add_argument(
         "--offline",
         action="store_true",
-        help="仅使用本地模型，不连接 Gmail 或 Google 日历",
+        help="Use the local model only, without connecting to Gmail or Google Calendar",
     )
     parser.add_argument(
-        "--new", action="store_true", help="清空近期上下文后处理这条消息，保留长期偏好"
+        "--new",
+        action="store_true",
+        help="Clear recent context before this request, preserving saved preferences",
     )
     args = parser.parse_args(argv)
     context = RequestContext(
@@ -62,35 +67,38 @@ def main(argv: list[str] | None = None) -> None:
                 persist_state=lambda state: save_conversation(path, state),
             )
     except ConversationVersionError as error:
-        parser.exit(1, f"{error}\n本轮未调用模型或执行工具，原会话文件未修改。\n")
+        parser.exit(
+            1,
+            f"{error}\nNo model or tools were called. The original conversation file was not modified.\n",
+        )
     except ConversationError as error:
         confirmed = error.reply if isinstance(error, ToolCheckpointError) else reply
         if confirmed is not None:
             print(confirmed.text)
             parser.exit(
                 1,
-                "近期会话保存失败，已执行的操作不会因此撤销，请勿重复提交。"
-                "隐私状态可能未保存；请修复本地存储后重新查询核实，"
-                "继续私人话题时请明确使用 --private。\n",
+                "Conversation saving failed. Completed operations are not undone; do not submit them again. "
+                "Privacy state may not have been saved. Fix local storage and query again to verify. "
+                "Use --private explicitly when continuing a private topic.\n",
             )
         parser.exit(
             1,
-            f"{error}\n本轮业务可能已执行，长期记忆修改也可能已保存。隐私状态可能未保存；修复会话文件前请继续使用 --private。\n",
+            f"{error}\nOperations may have completed and preference edits may have been saved. Privacy state may not have been saved; use --private until conversation storage is repaired.\n",
         )
     except (ProviderError, GmailError, CalendarError) as error:
-        parser.exit(1, f"请求失败：{error}\n")
+        parser.exit(1, f"Request failed: {error}\n")
     except ValueError as error:
         parser.error(str(error))
     print(
-        f"决策模型：{reply.decision.provider.value}（回退：{reply.decision.used_fallback}）"
+        f"Decision provider: {reply.decision.provider.value} (fallback: {reply.decision.used_fallback})"
     )
-    print(f"首步分支：{reply.decision.branch.value}")
+    print(f"Initial branch: {reply.decision.branch.value}")
     print(
-        f"决策步数：{reply.decision_count}；工具次数：{reply.tool_count}；结束原因：{reply.stop_reason}"
+        f"Decision steps: {reply.decision_count}; tool calls: {reply.tool_count}; stop reason: {reply.stop_reason}"
     )
     if reply.execution is not None:
         print(
-            f"回答模型：{reply.execution.provider.value}（回退：{reply.execution.used_fallback}）"
+            f"Answer provider: {reply.execution.provider.value} (fallback: {reply.execution.used_fallback})"
         )
     print()
     print(reply.text)

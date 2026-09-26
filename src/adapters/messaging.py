@@ -16,9 +16,11 @@ class MessageContentError(DeliveryError):
 def send_message(text: str, *, target: str) -> None:
     """Send once to a caller-selected target using the private Hermes profile."""
     if not text.strip():
-        raise MessageContentError("不能发送空消息。")
+        raise MessageContentError("Cannot send an empty message.")
     if "MEDIA:" in text.upper():
-        raise MessageContentError("摘要含有 Hermes 附件标记；本入口只发送文本。")
+        raise MessageContentError(
+            "The summary contains a Hermes attachment marker. This entry point sends text only."
+        )
     profile = Path.home() / ".hermes/profiles/hw3-local"
     env = {
         key: os.environ[key]
@@ -53,9 +55,9 @@ def send_message(text: str, *, target: str) -> None:
         )
     except (OSError, subprocess.TimeoutExpired):
         raise DeliveryError(
-            "未能确认消息送达；请先检查 Telegram，避免重复发送。"
+            "Message delivery is unconfirmed. Check Telegram first to avoid duplicate sends."
         ) from None
     if result.returncode != 0:
         raise DeliveryError(
-            "消息发送未完成；请先检查 Telegram，再排查 Hermes 配置和网络。"
+            "Message delivery did not complete. Check Telegram first, then the Hermes configuration and network."
         )

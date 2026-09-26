@@ -37,7 +37,7 @@ class ReminderLedger:
                     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except BlockingIOError:
                     raise CalendarBusyError(
-                        "提醒账本正在处理其他操作，请稍后重试。"
+                        "The reminder ledger is busy with another operation. Try again later."
                     ) from None
                 if not self.path.exists():
                     fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
@@ -50,7 +50,7 @@ class ReminderLedger:
                         if conn.execute(
                             "SELECT name FROM sqlite_master WHERE type='table'"
                         ).fetchone():
-                            raise CalendarError("提醒账本格式不受支持。")
+                            raise CalendarError("Unsupported reminder ledger format.")
                         conn.executescript("""
                             CREATE TABLE events (
                                 id TEXT PRIMARY KEY, version TEXT NOT NULL,
@@ -67,12 +67,14 @@ class ReminderLedger:
                         """)
                         conn.commit()
                     elif version != 2:
-                        raise CalendarError("提醒账本版本不受支持。")
+                        raise CalendarError("Unsupported reminder ledger version.")
                     yield conn
                 finally:
                     conn.close()
         except (OSError, sqlite3.Error):
-            raise CalendarError("提醒账本无法读写，请检查数据库及目录权限。") from None
+            raise CalendarError(
+                "Cannot read or write the reminder ledger. Check database and directory permissions."
+            ) from None
 
     @staticmethod
     def _item(row) -> CalendarItem:
@@ -84,7 +86,9 @@ class ReminderLedger:
                 raise ValueError("Mismatched time")
             return item
         except (TypeError, ValueError, KeyError, OverflowError):
-            raise CalendarError("提醒账本记录损坏，本次操作未执行。") from None
+            raise CalendarError(
+                "The reminder ledger record is corrupt. This operation was not performed."
+            ) from None
 
     def reconcile_external(
         self,
@@ -107,7 +111,9 @@ class ReminderLedger:
             or not starts_after <= aware_time(item.starts_at) < starts_before
             for item in items
         ):
-            raise CalendarError("日历同步快照无效，本次未采用。")
+            raise CalendarError(
+                "Invalid calendar synchronization snapshot. It was not used."
+            )
         with self._connection() as conn:
             conn.execute("BEGIN IMMEDIATE")
             seen = {item.event_id for item in items}
@@ -187,7 +193,7 @@ class ReminderLedger:
         if current.utcoffset() is None or not timedelta(0) <= grace <= timedelta(
             days=1
         ):
-            raise ValueError("提醒检查时间或补发窗口无效。")
+            raise ValueError("Invalid reminder check time or delivery grace period.")
         counts = {"sent": 0, "failed": 0, "unknown": 0, "expired": 0}
         with self._connection() as conn:
             # Interrupted sends require manual inspection, never an automatic retry.
@@ -259,7 +265,7 @@ class ReminderLedger:
         if current.utcoffset() is None or not timedelta(0) <= grace <= timedelta(
             days=1
         ):
-            raise ValueError("提醒检查时间或补发窗口无效。")
+            raise ValueError("Invalid reminder check time or delivery grace period.")
         with self._connection() as conn:
             rows = conn.execute(
                 "SELECT e.* FROM reminders r JOIN events e ON e.id=r.event_id AND e.version=r.version "

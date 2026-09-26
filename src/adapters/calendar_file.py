@@ -48,5 +48,5 @@ def load_calendar_file(path: Path) -> tuple[list[CalendarEvent], date, ZoneInfo]
         return events, target_date, timezone
     except (OSError, ValueError, TypeError, KeyError, ZoneInfoNotFoundError):
         raise CalendarFileError(
-            "无法读取日历文件：请检查 UTF-8 JSON、日期、时区和事件字段；开始时间须包含 UTC 偏移，时长须为正整数。"
+            "Cannot read the calendar file. Check UTF-8 JSON, dates, timezones, and event fields; starts need UTC offsets and durations must be positive integers."
         ) from None

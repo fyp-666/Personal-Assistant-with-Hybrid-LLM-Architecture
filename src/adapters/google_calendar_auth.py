@@ -32,11 +32,13 @@ def configuration_lock(home: Path):
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 raise CalendarBusyError(
-                    "Google 日历授权或配置正在使用，请稍后重试。"
+                    "Google Calendar authorization or configuration is busy. Try again later."
                 ) from None
             yield
     except OSError:
-        raise CalendarError("无法读写 Google 日历本地配置，请检查目录权限。") from None
+        raise CalendarError(
+            "Cannot read or write the local Google Calendar configuration. Check directory permissions."
+        ) from None
 
 
 def save_json(path: Path, data: dict) -> None:
@@ -52,7 +54,7 @@ def save_json(path: Path, data: dict) -> None:
         os.replace(temporary, path)
     except OSError:
         raise CalendarError(
-            "无法保存 Google 日历配置；远端已完成的操作不会自动撤销。"
+            "Cannot save Google Calendar configuration. Completed remote operations are not automatically undone."
         ) from None
     finally:
         if temporary and os.path.exists(temporary):
@@ -84,7 +86,7 @@ def load_config(home: Path | None = None) -> dict:
         return data
     except (OSError, ValueError, TypeError, KeyError):
         raise CalendarError(
-            "Google 日历配置缺失或无效，请运行 calendar google connect。"
+            "Google Calendar configuration is missing or invalid. Run calendar google connect."
         ) from None
 
 
@@ -101,7 +103,7 @@ def authorize(
     from requests import RequestException
 
     if type(port) is not int or not 1024 <= port <= 65535:
-        raise CalendarError("OAuth 回调端口须为 1024 到 65535。")
+        raise CalendarError("The OAuth callback port must be between 1024 and 65535.")
     directory = home if home is not None else calendar_home()
     scopes = list(OWNED_SCOPES) if existing else [APP_SCOPE]
     with configuration_lock(directory):
@@ -117,7 +119,7 @@ def authorize(
                 raise ValueError
         except (OSError, ValueError, KeyError, TypeError):
             raise CalendarError(
-                "请提供从 Google Cloud 下载的桌面应用 OAuth 客户端 JSON。"
+                "Provide the desktop application OAuth client JSON downloaded from Google Cloud."
             ) from None
         try:
             flow = InstalledAppFlow.from_client_config(
@@ -131,18 +133,20 @@ def authorize(
                 port=port,
                 open_browser=False,
                 timeout_seconds=300,
-                authorization_prompt_message="请在本机浏览器打开以下链接并授权（5分钟内有效）：\n{url}",
-                success_message="Google Calendar 授权已收到，可以关闭此页面。",
+                authorization_prompt_message="Open this link in a browser on this computer and authorize within 5 minutes:\n{url}",
+                success_message="Google Calendar authorization received. You can close this page.",
                 access_type="offline",
                 prompt="consent",
             )
         except (OAuth2Error, RequestException, OSError, ValueError, AttributeError):
             # OAuth exceptions may include authorization codes, tokens or account details.
             raise CalendarError(
-                "Google 授权未完成或已超时，请检查浏览器和回调端口后重试。"
+                "Google authorization did not complete or timed out. Check the browser and callback port, then retry."
             ) from None
         if not credentials.refresh_token or not credentials.has_scopes(scopes):
-            raise CalendarError("未获得所需权限或离线刷新令牌，请重新授权。")
+            raise CalendarError(
+                "Required permissions or an offline refresh token were not granted. Authorize again."
+            )
         save_json(directory / "token.json", json.loads(credentials.to_json()))
 
 
@@ -209,7 +213,7 @@ def build_service(home: Path | None = None):
                 save_json(directory / "token.json", json.loads(credentials.to_json()))
         except (OSError, ValueError, TypeError, KeyError, GoogleAuthError):
             raise CalendarError(
-                "Google 日历授权不可用，请运行 calendar google auth 重新授权。"
+                "Google Calendar authorization is unavailable. Run calendar google auth to authorize again."
             ) from None
     # Refresh explicitly above; never transparently replay a write after a 401.
     http = CalendarHTTP(credentials)

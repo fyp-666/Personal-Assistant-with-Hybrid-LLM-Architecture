@@ -42,25 +42,27 @@ def api_call(resource, method: str, *, etag: str | None = None, **kwargs):
     except HttpError as error:
         code = error.resp.status
         if code == 412:
-            message = "日程已在 Google 中更改，请重新查询后再操作。"
+            message = (
+                "The event changed in Google. Query it again before making changes."
+            )
         elif code in {404, 410}:
             raise GoogleNotFound(
-                "Google 日历或日程已不存在，请重新查询或检查绑定。"
+                "The Google calendar or event no longer exists. Query again or check the binding."
             ) from None
         elif code in {401, 403}:
-            message = "Google 日历授权、权限或 API 配额不可用，请检查配置。"
+            message = "Google Calendar authorization, permissions, or API quota are unavailable. Check the configuration."
         elif code == 409:
-            message = "Google 已存在该编号，请先查询确认实际结果。"
+            message = "This ID already exists in Google. Query first to verify the actual result."
         elif method in {"insert", "patch", "delete"} and code >= 500:
-            message = "Google 写入结果不确定，请先在日历中核查，勿重复新建。"
+            message = "The Google write outcome is uncertain. Check the calendar before creating anything again."
         else:
-            message = "Google 日历请求未完成，请检查参数或稍后重试。"
+            message = "The Google Calendar request did not complete. Check the arguments or try again later."
         raise CalendarError(message) from None
     except (OSError, httplib2.HttpLib2Error, GoogleAuthError):
         message = (
-            "Google 写入结果不确定，请先在日历中核查，勿重复新建。"
+            "The Google write outcome is uncertain. Check the calendar before creating anything again."
             if method in {"insert", "patch", "delete"}
-            else "暂时无法读取 Google 日历，本次不使用旧数据执行操作或发送提醒。"
+            else "Google Calendar is temporarily unavailable. Cached data will not be used for operations or reminders."
         )
         raise CalendarError(message) from None
 
@@ -102,10 +104,12 @@ class GoogleCalendar:
 
     def _id(self, event_id: str) -> str:
         if not event_id.startswith(self.prefix):
-            raise CalendarError("这条日程属于其他日历或旧的本地日历，请先重新查询。")
+            raise CalendarError(
+                "This event belongs to another calendar or a former local calendar. Query it again first."
+            )
         raw = event_id[len(self.prefix) :]
         if not raw or len(raw) > 1024:
-            raise CalendarError("Google 日程编号无效，请重新查询。")
+            raise CalendarError("Invalid Google event ID. Query again.")
         return raw
 
     def _item(self, event: dict) -> CalendarItem:
@@ -150,7 +154,7 @@ class GoogleCalendar:
             return CalendarItem(
                 self.prefix + event["id"],
                 etag[1:-1],
-                event.get("summary") or "（无标题）",
+                event.get("summary") or "(Untitled)",
                 start.isoformat(),
                 zone,
                 duration,
@@ -177,7 +181,7 @@ class GoogleCalendar:
             if not isinstance(page, dict) or not isinstance(
                 page.get("items", []), list
             ):
-                raise CalendarError("Google 日历返回了无效列表。")
+                raise CalendarError("Google Calendar returned an invalid list.")
             for raw in page.get("items", []):
                 try:
                     item = self._item(raw)
@@ -203,10 +207,14 @@ class GoogleCalendar:
                     key=lambda i: (aware_time(i.starts_at).timestamp(), i.event_id),
                 ), skipped
             if not isinstance(token, str) or token in tokens:
-                raise CalendarError("Google 日历分页无效，本次结果未采用。")
+                raise CalendarError(
+                    "Invalid Google Calendar pagination. These results were not used."
+                )
             tokens.add(token)
             params["pageToken"] = token
-        raise CalendarError("日历范围内记录过多，请缩小范围；本次未使用不完整结果。")
+        raise CalendarError(
+            "Too many events in this range. Narrow the range; incomplete results were not used."
+        )
 
     def _get(self, events, event_id: str):
         return api_call(
@@ -251,10 +259,12 @@ class GoogleCalendar:
         try:
             request = CalendarRequest.from_dict(request.to_dict())
         except (TypeError, ValueError, KeyError, OverflowError):
-            raise CalendarError("日历操作参数无效，本次未写入。") from None
+            raise CalendarError(
+                "Invalid calendar arguments. No write was performed."
+            ) from None
         current = now if now is not None else datetime.now(UTC)
         if current.utcoffset() is None:
-            raise CalendarError("当前时间须包含时区。")
+            raise CalendarError("The current time must include a timezone.")
         if request.event_id is not None:
             self._id(
                 request.event_id
@@ -264,7 +274,7 @@ class GoogleCalendar:
             items, skipped = self._list(events, request.query)
             warnings = (
                 [
-                    f"有 {skipped} 条 Google 记录无法由本版处理（如全天、重复或多重提醒），请在 Google 日历查看。"
+                    f"{skipped} Google records are unsupported by this version (such as all-day, recurring, or multiple-reminder events). View them in Google Calendar."
                 ]
                 if skipped
                 else []
@@ -284,17 +294,19 @@ class GoogleCalendar:
                 old = self._item(previous)
             except UnsupportedEvent:
                 raise CalendarError(
-                    "该 Google 日程已取消或属于暂不支持的类型，本次未修改。"
+                    "This Google event is cancelled or unsupported. It was not modified."
                 ) from None
             if old.version != request.version:
-                raise CalendarError("日程已在 Google 中更改，请重新查询后再操作。")
+                raise CalendarError(
+                    "The event changed in Google. Query it again before making changes."
+                )
             if (
                 previous.get("attendees")
                 or previous.get("attendeesOmitted")
                 or previous.get("locked")
             ):
                 raise CalendarError(
-                    "本版不修改有参与者或被锁定的日程，请在 Google 日历操作。"
+                    "This version cannot modify events with attendees or locked events. Use Google Calendar."
                 )
         if request.operation == "cancel":
             api_call(
@@ -314,10 +326,14 @@ class GoogleCalendar:
                 {**(old.fields() if old else {}), **request.changes}
             )
         except (TypeError, ValueError, KeyError, OverflowError):
-            raise CalendarError("日程字段或时间无效，本次未写入。") from None
+            raise CalendarError(
+                "Invalid event fields or time. No write was performed."
+            ) from None
         start = aware_time(fields["starts_at"])
         if start.timestamp() <= current.timestamp():
-            raise CalendarError("创建或修改后的日程须在未来，请明确日期和时间。")
+            raise CalendarError(
+                "Created or updated events must start in the future. Specify the date and time."
+            )
         reminder = fields["reminder_minutes"]
         same_schedule = (
             old is not None
@@ -329,11 +345,15 @@ class GoogleCalendar:
             and start.astimezone(UTC) - timedelta(minutes=reminder) < current
             and not same_schedule
         ):
-            raise CalendarError("提醒时间已经过去，请缩短提前量或调整日程时间。")
+            raise CalendarError(
+                "The reminder time is in the past. Reduce the advance notice or adjust the event time."
+            )
         try:
             body = self._body(fields, previous)
         except (ValueError, OverflowError):
-            raise CalendarError("日程结束时间超出可支持范围，本次未写入。") from None
+            raise CalendarError(
+                "The event end time exceeds the supported range. No write was performed."
+            ) from None
         if request.operation == "create":
             body.update(
                 id=uuid4().hex,
@@ -379,7 +399,7 @@ class GoogleCalendar:
             item = self._item(saved)
         except UnsupportedEvent:
             raise CalendarError(
-                "Google 已响应写入，但返回内容无法解析；请先查询核查，勿重复新建。"
+                "Google responded to the write, but its response could not be parsed. Query to verify before creating anything again."
             ) from None
         return CalendarResult(
             request.operation,

@@ -47,7 +47,7 @@ def load_telegram_config(profile: Path) -> TelegramConfig:
         return TelegramConfig(token, int(user), int(chat))
     except (OSError, ValueError, KeyError):
         raise TelegramError(
-            "请检查 Local profile 的 Telegram 配置：需要 Token 和同一个数字用户/私聊 ID。"
+            "Check the Local profile Telegram configuration: a token and matching numeric user/private-chat IDs are required."
         ) from None
 
 
@@ -65,7 +65,7 @@ def _request(config: TelegramConfig, method: str, data: dict) -> object:
         return payload["result"]
     except (OSError, URLError, ValueError, KeyError):
         raise TelegramError(
-            "Telegram 请求失败；请检查网络、Token，以及是否有其他接收器或 webhook 正在运行。"
+            "Telegram request failed. Check the network, token, and other active receivers or webhooks."
         ) from None
 
 
@@ -73,7 +73,7 @@ def check_polling_available(config: TelegramConfig) -> None:
     info = _request(config, "getWebhookInfo", {})
     if not isinstance(info, dict) or info.get("url"):
         raise TelegramError(
-            "机器人已配置 webhook 或状态异常，接收器未启动；不会自动移除已有 webhook。"
+            "A webhook is configured or the bot state is invalid. The receiver was not started; existing webhooks are not removed automatically."
         )
 
 
@@ -93,7 +93,7 @@ def get_updates(
         not isinstance(update, dict) or type(update.get("update_id")) is not int
         for update in updates
     ):
-        raise TelegramError("Telegram 返回了无效的消息列表。")
+        raise TelegramError("Telegram returned an invalid message list.")
     return updates
 
 
@@ -126,21 +126,21 @@ def reply_to_update(
         key in message
         for key in ("forward_origin", "forward_from", "forward_sender_name")
     ):
-        answer = "目前只处理你直接发送的文字请求，暂不处理转发消息。"
+        answer = "Only text requests sent directly by you are supported. Forwarded messages are not supported."
     elif not text:
-        answer = "目前只支持文字请求，暂不处理图片、语音或附件。"
+        answer = "Only text requests are supported. Images, voice messages, and attachments are not supported."
     elif command == "/new" and reset is not None:
         reset()
-        answer = "已开始新会话，近期对话和邮件、日历快照已清空，长期偏好保留，已保存日程不变。"
+        answer = "Started a new conversation. Recent exchanges and email/calendar snapshots were cleared. Saved preferences and calendar events are unchanged."
     elif command in {"/start", "/help"}:
         answer = (
-            "可以聊天、按日期或主题查询邮件（每次最多10封），查询、创建、修改或取消已绑定的 Google 日历日程，或更新长期偏好。会结合近期对话和已查询的邮件、日历资料理解你的消息；/new 开始新会话，长期偏好保留。"
-            "默认使用 GPT 理解和回答，可使用近期对话、邮件及日历资料；连接失败时回退 Local。需要仅本地处理请用 /private 你的问题，之后保持本地直到 /new。"
+            "You can chat, search email by date or subject (up to 10 messages), query/create/update/cancel events in the bound Google calendar, or update long-term preferences. Recent exchanges and retrieved email/calendar data provide context. Use /new to start a new conversation while keeping preferences. "
+            "GPT handles requests by default using relevant conversation, email, and calendar context, with Local fallback on connection failure. Use /private followed by your question for local-only processing, which remains active until /new."
         )
     elif text.startswith("/") and command != "/private":
-        answer = "未知命令。可直接发送文字问题，或用 /private 你的问题。"
+        answer = "Unknown command. Send a text question, or use /private followed by your question."
     elif command == "/private" and not rest.strip():
-        answer = "请在 /private 后面填写需要本地处理的问题。"
+        answer = "After /private, enter the question to process locally."
     else:
         private = command == "/private"
         request = rest.strip() if command == "/private" else text
@@ -154,42 +154,41 @@ def reply_to_update(
             # Deliver the confirmed receipt, then preserve the storage failure so
             # the receiver stops before another request reloads stale state.
             notice = (
-                "近期会话保存失败，已执行的操作不会撤销，请勿重复提交。隐私状态可能未保存，接收器将停止。"
-                "请修复本地存储后重启并重新查询核实；"
-                "继续私人话题时请明确使用 /private。"
+                "Conversation saving failed. Completed operations are not undone; do not submit them again. Privacy state may not have been saved, so the receiver will stop. "
+                "Fix local storage, restart, and query again to verify. "
+                "Use /private explicitly when continuing a private topic."
             )
             try:
                 send(error.reply.text + "\n\n" + notice)
             except MessageContentError:
                 send(
-                    "本轮已取得工具结果，但回执内容无法通过纯文本发送检查；"
-                    "已执行的操作不会撤销，请勿重复提交。\n\n" + notice
+                    "Tool results were obtained, but the receipt failed the text-only delivery check. "
+                    "Completed operations are not undone; do not submit them again.\n\n"
+                    + notice
                 )
             raise
         except ConversationVersionError:
             # Loading failed before inference or tools. Keep polling so /new can reset it.
             answer = (
-                "近期会话格式版本不受支持，本轮未执行。"
-                "请发送 /new 开始新会话；需要保留旧上下文时，请先单独转换存档。"
+                "Unsupported conversation format version. This request was not executed. "
+                "Send /new to start a new conversation. Convert the archive separately first if you need to retain old context."
             )
         except ConversationError:
             # Continuing could reload an old public state after a private save failed.
             # This fixed notice has no content directives; uncertain sends propagate.
             send(
-                "近期对话文件读写失败。本轮业务可能已执行，长期记忆修改也可能已保存；"
-                "会话隐私状态可能未保存，接收器将停止。请修复本地存储后重启；继续私人话题时请明确使用 /private。"
+                "Conversation storage failed. Operations may have completed and preference edits may have been saved. "
+                "Conversation privacy state may not have been saved, so the receiver will stop. Fix local storage before restarting; use /private explicitly for private topics."
             )
             raise
         except (ProviderError, GmailError, CalendarError):
-            answer = (
-                "本次请求处理失败，模型、邮箱或本地会话暂不可用。请稍后重新发送请求。"
-            )
+            answer = "This request failed because the model, mailbox, or local conversation was unavailable. Try again later."
     try:
         send(answer)
     except MessageContentError:
         # The original text never reached Hermes. A fixed notice is safe to send;
         # uncertain transport failures still propagate without a retry.
         send(
-            "本轮回复内容无法通过纯文本发送检查，已阻止发送。请换一种方式提问；接收器会继续运行。"
+            "The reply failed the text-only delivery check and was not sent. Rephrase your request; the receiver will keep running."
         )
     return True

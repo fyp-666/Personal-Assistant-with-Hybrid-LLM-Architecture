@@ -19,7 +19,7 @@ def build_daily_briefing(
     """Compose selected data, keeping email order and continuing after ProviderError."""
     calendar_section = build_calendar_briefing(events, providers, timezone=timezone)
     email_section = build_email_briefing(emails, providers)
-    return f"每日简报\n\n{calendar_section}\n\n邮件摘要\n\n{email_section}"
+    return f"Daily briefing\n\n{calendar_section}\n\nEmail summaries\n\n{email_section}"
 
 
 def build_email_briefing(
@@ -37,4 +37,4 @@ def build_email_briefing(
             summary = result.text
         email_blocks.append(render_email_summary(email, summary))
 
-    return "\n\n".join(email_blocks) if email_blocks else "暂无邮件"
+    return "\n\n".join(email_blocks) if email_blocks else "No email available"

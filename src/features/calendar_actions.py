@@ -25,10 +25,10 @@ class CalendarBusyError(CalendarError):
 
 def aware_time(value: str) -> datetime:
     if not isinstance(value, str) or "T" not in value:
-        raise ValueError("日历时间须为带 UTC 偏移的日期时间。")
+        raise ValueError("Calendar times must be datetimes with UTC offsets.")
     result = datetime.fromisoformat(value)
     if result.utcoffset() is None:
-        raise ValueError("日历时间须包含 UTC 偏移。")
+        raise ValueError("Calendar times must include UTC offsets.")
     return result
 
 
@@ -39,13 +39,15 @@ def _text(value: object, limit: int, *, empty: bool = False) -> None:
         or (not empty and not value.strip())
         or any(ord(char) < 32 for char in value)
     ):
-        raise ValueError("日历文本为空、过长或包含控制字符。")
+        raise ValueError(
+            "Calendar text is empty, too long, or contains control characters."
+        )
 
 
 def validate_event(fields: dict) -> dict:
     """Normalize a complete event, rejecting DST gaps and contradictory offsets."""
     if not isinstance(fields, dict) or set(fields) != EVENT_FIELDS:
-        raise ValueError("日程字段不完整。")
+        raise ValueError("Incomplete event fields.")
     _text(fields["title"], 200)
     _text(fields["location"], 200, empty=True)
     _text(fields["timezone"], 64)
@@ -55,15 +57,21 @@ def validate_event(fields: dict) -> dict:
     if start.replace(tzinfo=None) != local.replace(tzinfo=None) or (
         start.utcoffset() != local.utcoffset()
     ):
-        raise ValueError("开始时间与时区不一致，或处于夏令时不存在的时间。")
+        raise ValueError(
+            "The start time does not match its timezone or falls in a daylight-saving gap."
+        )
     duration = fields["duration_minutes"]
     if type(duration) is not int or not 0 <= duration <= 10080:
-        raise ValueError("时长须为 0 到 10080 分钟；0 表示单次提醒事项。")
+        raise ValueError(
+            "Duration must be between 0 and 10080 minutes; 0 denotes a standalone reminder."
+        )
     reminder = fields["reminder_minutes"]
     if reminder is not None and (
         type(reminder) is not int or not 0 <= reminder <= 40320
     ):
-        raise ValueError("提前提醒须为 0 到 40320 分钟，或 null。")
+        raise ValueError(
+            "Reminder advance notice must be between 0 and 40320 minutes, or null."
+        )
     # Validate arithmetic now, before an event could be committed.
     start.astimezone(UTC) + timedelta(minutes=duration)
     if reminder is not None:
@@ -74,7 +82,9 @@ def validate_event(fields: dict) -> dict:
 def validate_event_proposal(proposal: dict) -> dict:
     """Validate a model-computed full event; never infer a missing time value."""
     if not isinstance(proposal, dict) or set(proposal) != EVENT_FIELDS | {"ends_at"}:
-        raise ValueError("模型须提供完整日程，包括开始、结束时间和时长。")
+        raise ValueError(
+            "The model must provide a complete event, including start time, end time, and duration."
+        )
     fields = validate_event(
         {key: value for key, value in proposal.items() if key != "ends_at"}
     )
@@ -84,12 +94,14 @@ def validate_event_proposal(proposal: dict) -> dict:
         end.replace(tzinfo=None) != local_end.replace(tzinfo=None)
         or end.utcoffset() != local_end.utcoffset()
     ):
-        raise ValueError("结束时间与时区不一致。")
+        raise ValueError("The end time does not match its timezone.")
     start = aware_time(fields["starts_at"])
     if end.astimezone(UTC) - start.astimezone(UTC) != timedelta(
         minutes=fields["duration_minutes"]
     ):
-        raise ValueError("模型给出的开始、结束时间与时长不一致；本次未写入。")
+        raise ValueError(
+            "The proposed start time, end time, and duration are inconsistent. No write was performed."
+        )
     return fields
 
 
@@ -103,14 +115,16 @@ class CalendarQuery:
     def __post_init__(self):
         for value in (self.starts_after, self.starts_before):
             if not isinstance(value, datetime) or value.utcoffset() is None:
-                raise ValueError("查询边界须包含时区。")
+                raise ValueError("Query boundaries must include timezones.")
         span = self.starts_before.astimezone(UTC) - self.starts_after.astimezone(UTC)
         if not timedelta(0) < span <= timedelta(days=366):
-            raise ValueError("查询区间须大于零且不超过 366 天。")
+            raise ValueError(
+                "The query interval must be positive and at most 366 days."
+            )
         if self.text is not None:
             _text(self.text, 200)
         if type(self.limit) is not int or not 1 <= self.limit <= MAX_CALENDAR_RESULTS:
-            raise ValueError("每次查询上限为 1 到 10 条。")
+            raise ValueError("The query limit must be between 1 and 10.")
 
     @classmethod
     def from_dict(cls, data):
@@ -120,7 +134,7 @@ class CalendarQuery:
             "text",
             "limit",
         }:
-            raise ValueError("无效的日历查询字段。")
+            raise ValueError("Invalid calendar query fields.")
         return cls(
             aware_time(data["starts_after"]),
             aware_time(data["starts_before"]),
@@ -146,18 +160,20 @@ class CalendarRequest:
 
     def __post_init__(self):
         if self.operation not in {"query", "create", "update", "cancel"}:
-            raise ValueError("不支持的日历操作。")
+            raise ValueError("Unsupported calendar operation.")
         if self.operation == "query":
             if not isinstance(self.query, CalendarQuery) or any(
                 v is not None for v in (self.event_id, self.version, self.changes)
             ):
-                raise ValueError("查询只接受 query。")
+                raise ValueError("A query operation accepts only query arguments.")
             return
         if self.query is not None:
-            raise ValueError("写入操作不能同时包含查询。")
+            raise ValueError("A write operation cannot also contain a query.")
         if self.operation == "create":
             if self.event_id is not None or self.version is not None:
-                raise ValueError("新建日程不能指定已有日程编号。")
+                raise ValueError(
+                    "Creating an event cannot specify an existing event ID."
+                )
             object.__setattr__(
                 self,
                 "changes",
@@ -170,13 +186,13 @@ class CalendarRequest:
         _text(self.version, 128)
         if self.operation == "cancel":
             if self.changes is not None:
-                raise ValueError("取消日程不能同时修改字段。")
+                raise ValueError("Cancelling an event cannot also modify fields.")
         elif (
             not isinstance(self.changes, dict)
             or not self.changes
             or set(self.changes) - (EVENT_FIELDS | {"ends_at"})
         ):
-            raise ValueError("修改只接受非空日程字段。")
+            raise ValueError("Updates require nonempty event fields.")
         if self.operation == "update" and "ends_at" in self.changes:
             object.__setattr__(self, "changes", validate_event_proposal(self.changes))
 
@@ -189,7 +205,7 @@ class CalendarRequest:
             "version",
             "changes",
         }:
-            raise ValueError("无效的日历操作字段。")
+            raise ValueError("Invalid calendar operation fields.")
         return cls(
             data["operation"],
             CalendarQuery.from_dict(data["query"])
@@ -223,7 +239,7 @@ class CalendarItem:
         _text(self.event_id, 1152)
         _text(self.version, 128)
         if self.status not in {"confirmed", "cancelled"}:
-            raise ValueError("无效的日程状态。")
+            raise ValueError("Invalid event status.")
         validate_event(self.fields())
 
     def fields(self):
@@ -245,7 +261,7 @@ class CalendarItem:
             "version",
             "status",
         }:
-            raise ValueError("无效的日程记录。")
+            raise ValueError("Invalid event record.")
         return cls(**data)
 
 
@@ -260,7 +276,7 @@ class CalendarResult:
 
     def __post_init__(self):
         if self.operation not in {"query", "create", "update", "cancel"}:
-            raise ValueError("无效的日历结果。")
+            raise ValueError("Invalid calendar result.")
         if (
             not isinstance(self.items, list)
             or len(self.items) > MAX_CALENDAR_RESULTS
@@ -268,18 +284,20 @@ class CalendarResult:
             or len({item.event_id for item in self.items}) != len(self.items)
             or type(self.has_more) is not bool
         ):
-            raise ValueError("无效的日历记录。")
+            raise ValueError("Invalid calendar record.")
         if self.operation == "query":
             if (
                 not isinstance(self.query, CalendarQuery)
                 or len(self.items) > self.query.limit
             ):
-                raise ValueError("日历结果缺少查询条件或超出上限。")
+                raise ValueError(
+                    "Calendar results lack query conditions or exceed the limit."
+                )
         elif self.query is not None or self.has_more or len(self.items) != 1:
-            raise ValueError("日历操作必须返回一条实际结果。")
+            raise ValueError("A calendar write must return exactly one actual result.")
 
         if not isinstance(self.warnings, list) or len(self.warnings) > 3:
-            raise ValueError("无效的日历提示。")
+            raise ValueError("Invalid calendar warning.")
         for warning in self.warnings:
             _text(warning, 300)
 
@@ -288,7 +306,9 @@ class CalendarResult:
 
         expected_status = "cancelled" if self.operation == "cancel" else "confirmed"
         if any(item.status != expected_status for item in self.items):
-            raise ValueError("日历操作状态与返回记录不一致。")
+            raise ValueError(
+                "The calendar operation status does not match the returned record."
+            )
 
     def to_dict(self):
         return {
@@ -309,7 +329,7 @@ class CalendarResult:
             - {"operation", "items", "query", "has_more", "warnings", "source_label"}
             or not isinstance(data["items"], list)
         ):
-            raise ValueError("无效的日历快照。")
+            raise ValueError("Invalid calendar snapshot.")
         return cls(
             data["operation"],
             [CalendarItem.from_dict(item) for item in data["items"]],
@@ -326,21 +346,25 @@ def render_calendar_item(
     item: CalendarItem, *, include_identifiers: bool = True
 ) -> str:
     reminder = (
-        "不提醒"
+        "No reminder"
         if item.reminder_minutes is None
-        else "到时提醒"
+        else "Remind at the start"
         if item.reminder_minutes == 0
-        else f"提前 {item.reminder_minutes} 分钟提醒"
+        else f"Remind {item.reminder_minutes} minutes before"
     )
     if item.status == "cancelled":
-        reminder = "已取消，不再提醒"
-    duration = f"{item.duration_minutes} 分钟" if item.duration_minutes else "提醒事项"
+        reminder = "Cancelled; no further reminders"
+    duration = (
+        f"{item.duration_minutes} minutes"
+        if item.duration_minutes
+        else "Standalone reminder"
+    )
     identifiers = (
-        f"\n编号：{item.event_id}；版本：{item.version}" if include_identifiers else ""
+        f"\nID: {item.event_id}; version: {item.version}" if include_identifiers else ""
     )
     return (
-        f"{item.title}\n时间：{item.starts_at}（{item.timezone}）\n"
-        f"时长：{duration}；地点：{item.location or '未设置'}；Telegram：{reminder}"
+        f"{item.title}\nTime: {item.starts_at} ({item.timezone})\n"
+        f"Duration: {duration}; location: {item.location or 'Not set'}; Telegram: {reminder}"
         f"{identifiers}"
     )
 
@@ -349,32 +373,34 @@ def render_calendar_result(
     result: CalendarResult, *, include_identifiers: bool = True
 ) -> str:
     label = {
-        "query": "日程查询",
-        "create": "已创建日程",
-        "update": "已修改日程",
-        "cancel": "已取消日程",
+        "query": "Calendar query",
+        "create": "Event created",
+        "update": "Event updated",
+        "cancel": "Event cancelled",
     }
     lines = [label[result.operation]]
     if result.source_label:
-        lines.append(f"日历：{result.source_label}")
+        lines.append(f"Calendar: {result.source_label}")
         if result.query:
-            lines.append("本次仅查询上述日历。")
+            lines.append("Only the calendar above was queried.")
     if result.query:
         lines.append(
-            f"开始时间范围：{result.query.starts_after.isoformat()}（含）至 "
-            f"{result.query.starts_before.isoformat()}（不含）；上限 {result.query.limit} 条。"
+            f"Event start range: {result.query.starts_after.isoformat()} (inclusive) to "
+            f"{result.query.starts_before.isoformat()} (exclusive); limit {result.query.limit}."
         )
         if result.query.text:
-            lines.append(f"标题包含：{result.query.text}")
+            lines.append(f"Title contains: {result.query.text}")
     lines.extend(
         f"[{i}] {render_calendar_item(item, include_identifiers=include_identifiers)}"
         for i, item in enumerate(result.items, 1)
     )
     if not result.items:
         lines.append(
-            "本次没有返回可处理的日程。" if result.warnings else "没有符合条件的日程。"
+            "No supported events were returned."
+            if result.warnings
+            else "No matching events."
         )
     if result.has_more:
-        lines.append("还有日程未展示，请缩小范围。")
+        lines.append("More events are available. Narrow the range.")
     lines.extend(result.warnings)
     return "\n".join(lines)

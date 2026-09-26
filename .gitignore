@@ -229,3 +229,9 @@ __marimo__/
 # Local Google OAuth client configuration; never publish credentials.
 /json/
 client_secret*.json
+
+# Local handoff documents and retired root environment instructions.
+/Agent.md
+/Task.md
+/debugging.md
+/.env.example

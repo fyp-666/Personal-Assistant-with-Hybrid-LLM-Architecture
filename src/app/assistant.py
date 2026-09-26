@@ -47,7 +47,9 @@ class ToolCheckpointError(ConversationError):
     """A confirmed reply exists, but storing its conversation state failed."""
 
     def __init__(self, reply: AssistantReply):
-        super().__init__("已取得回复，但会话状态保存失败。")
+        super().__init__(
+            "A reply is available, but conversation state could not be saved."
+        )
         self.reply = replace(reply, stop_reason="persistence_failed")
 
 
@@ -61,7 +63,7 @@ def _update_memory(
         # or expose provider diagnostics / local paths to a messaging adapter.
         return MemoryOutcome(
             "failed",
-            "未能确认长期记忆更新成功。请检查模型连接、档案权限或修改指令；本次其他请求会继续处理。",
+            "The preference update could not be confirmed. Check the model connection, profile permissions, or edit instructions; the rest of this request will continue.",
         )
     return MemoryOutcome(
         "updated" if update.changed else "unchanged", render_memory_update(update)
@@ -71,22 +73,26 @@ def _update_memory(
 def _email_sources(result: EmailSearchResult) -> str:
     """Show the actual query scope and stable result numbers without inference."""
     query = result.query
-    lines = [f"收件箱查询：本次返回 {len(result.emails)} 封，上限 {query.limit} 封。"]
+    lines = [
+        f"Inbox query: returned {len(result.emails)} messages; limit {query.limit}."
+    ]
     if query.subject is not None:
-        lines.append(f"主题包含：{query.subject}")
+        lines.append(f"Subject contains: {query.subject}")
     if query.received_since is not None:
         lines.append(
-            f"收件时间：{query.received_since.isoformat()}（含）至 "
-            f"{query.received_before.isoformat()}（不含）"
+            f"Received range: {query.received_since.isoformat()} (inclusive) to "
+            f"{query.received_before.isoformat()} (exclusive)"
         )
-    lines.append("顺序：按邮件加入收件箱的顺序，从新到旧。")
+    lines.append("Order: newest to oldest by arrival in the inbox.")
     for number, email in enumerate(result.emails, 1):
-        lines.append(f"[{number}] 发件人：{email.sender}\n主题：{email.subject}")
+        lines.append(f"[{number}] Sender: {email.sender}\nSubject: {email.subject}")
         if not email.body.strip():
-            lines.append("正文：没有可摘要的文本，图片或附件内容尚未解析。")
+            lines.append(
+                "Body: no summarizable text; images and attachments have not been parsed."
+            )
     if result.has_more:
         lines.append(
-            "还有匹配邮件未展示；本次回答仅覆盖以上结果，可缩小日期或主题范围。"
+            "More matching messages are available. This answer covers only the results above; narrow the date or subject range."
         )
     return "\n".join(lines)
 
@@ -143,7 +149,7 @@ def _render_tool_receipts(
     for item in visible:
         if item.operation == "query" and item.status == "completed" and query_count > 1:
             query_number += 1
-            receipts.append(f"查询结果 {query_number}：\n{item.detail}")
+            receipts.append(f"Query result {query_number}:\n{item.detail}")
         else:
             receipts.append(item.detail)
     return "\n\n".join(receipts)
@@ -170,7 +176,10 @@ def _execute_tool(
             )
 
         if manage_calendar is None:
-            return outcome("not_executed", "日历操作暂未配置，本次未执行。")
+            return outcome(
+                "not_executed",
+                "Calendar operations are not configured. This operation was not performed.",
+            )
         if request.operation in {"update", "cancel"} and not any(
             item.event_id == request.event_id
             and item.version == request.version
@@ -179,7 +188,7 @@ def _execute_tool(
         ):
             return outcome(
                 "not_executed",
-                "目标或版本不在当前已确认记录中，本次未修改或取消任何日程。",
+                "The target or version is not among the confirmed records. No event was modified or cancelled.",
             )
         try:
             result = manage_calendar(request)
@@ -192,7 +201,7 @@ def _execute_tool(
                 )
             ):
                 raise CalendarError(
-                    "日历返回结果与请求不符；请重新查询核实实际状态，勿重复写入。"
+                    "The calendar result does not match the request. Query again to verify the actual state; do not repeat the write."
                 )
         except CalendarError as error:
             return outcome("unconfirmed", str(error), executed=True)
@@ -208,7 +217,7 @@ def _execute_tool(
             "email",
             "query",
             "not_executed",
-            "离线模式无法查询 Gmail；可以继续讨论已保存的邮件资料。",
+            "Gmail cannot be queried offline. Previously saved email data remains available for discussion.",
         )
     try:
         result = read_emails(request)
@@ -217,7 +226,7 @@ def _execute_tool(
             "email",
             "query",
             "unconfirmed",
-            "本次邮箱查询未完成，未取得新结果；已有邮件资料仅为历史快照。",
+            "The inbox query did not complete and returned no new results. Existing email data is only a historical snapshot.",
             executed=True,
         )
     if result.query != request:
@@ -225,13 +234,13 @@ def _execute_tool(
             "email",
             "query",
             "unconfirmed",
-            "邮箱返回的查询范围与请求不一致，本次结果未采用。",
+            "The returned email query scope differs from the request. These results were not used.",
             executed=True,
         )
     bounded = bound_email_result(result)
     detail = _email_sources(bounded)
     if not bounded.emails:
-        detail += "\n没有符合这些条件的邮件。"
+        detail += "\nNo messages match these conditions."
     return _ToolOutcome(
         "email", "query", "completed", detail, executed=True, email_result=bounded
     )
@@ -260,13 +269,13 @@ def handle_message(
     Callers can checkpoint confirmed results before the next model runs.
     """
     if any(type(n) is not int or n < 1 for n in (max_steps, max_tool_calls)):
-        raise ValueError("决策步数与工具次数上限必须是正整数。")
+        raise ValueError("Decision and tool-call limits must be positive integers.")
     if (
         type(max_elapsed_seconds) not in (int, float)
         or not math.isfinite(max_elapsed_seconds)
         or max_elapsed_seconds <= 0
     ):
-        raise ValueError("处理时限必须是有限正数。")
+        raise ValueError("The time limit must be a finite positive number.")
     started = time.monotonic()
     state = conversation if conversation is not None else Conversation()
     # Only trusted request restrictions persist. A provider fallback is run-local.
@@ -321,7 +330,7 @@ def handle_message(
     def stop(detail, reason):
         receipts = _render_tool_receipts(outcomes, calendar_goal)
         if receipts:
-            detail += "\n以下是本轮已取得的实际结果：\n" + receipts
+            detail += "\nActual results obtained during this request:\n" + receipts
         return finish(detail, stop_reason=reason)
 
     for step in range(1, max_steps + 1):
@@ -329,12 +338,18 @@ def handle_message(
             initial_decision is not None
             and time.monotonic() - started >= max_elapsed_seconds
         ):
-            return stop("已达到本轮处理时限，未再执行后续操作。", "time_limit")
+            return stop(
+                "The request time limit was reached. No further operations were performed.",
+                "time_limit",
+            )
         if preferences_dirty and load_preferences is not None:
             try:
                 preferences = load_preferences()
             except (ProviderError, OSError, UnicodeError):
-                return stop("偏好读取失败，后续处理已停止。", "preferences_unavailable")
+                return stop(
+                    "Preference loading failed. Further processing stopped.",
+                    "preferences_unavailable",
+                )
             preferences_dirty = False
         run_state = {
             "step": step,
@@ -360,7 +375,10 @@ def handle_message(
         except ProviderError:
             if initial_decision is None:
                 raise
-            return stop("后续模型决策暂不可用，未重试任何工具。", "decision_failed")
+            return stop(
+                "The next model decision is unavailable. No tools were retried.",
+                "decision_failed",
+            )
         execution_context = decision.context
         if decision.used_fallback:
             execution_context = replace(execution_context, cloud_allowed=False)
@@ -374,14 +392,18 @@ def handle_message(
                 preferences_dirty = memory.status != "failed"
         elif decision.memory_request is not None:
             # Defense in depth if a custom decision provider bypasses the parser.
-            return stop("本轮记忆步骤已处理，未重复保存。", "repeated_memory")
+            return stop(
+                "Memory was already processed for this request. It was not saved again.",
+                "repeated_memory",
+            )
 
         if decision.branch is DecisionBranch.ANSWER:
             text = decision.answer
             emails = [o.email_result for o in outcomes if o.email_result is not None]
             if emails:
                 sources = [
-                    (f"查询{i}：\n" if len(emails) > 1 else "") + _email_sources(result)
+                    (f"Query {i}:\n" if len(emails) > 1 else "")
+                    + _email_sources(result)
                     for i, result in enumerate(emails, 1)
                 ]
                 text = "\n\n".join([*sources, text])
@@ -396,17 +418,27 @@ def handle_message(
             else decision.email_query
         )
         if request is None:
-            return stop("工具参数缺失，本次拟议操作未执行。", "invalid_request")
+            return stop(
+                "Tool arguments are missing. The proposed operation was not performed.",
+                "invalid_request",
+            )
         requested = request.to_dict()
         if isinstance(request, CalendarRequest):
             if decision.calendar_goal != calendar_goal:
-                return stop("后续日历操作超出本轮原定目标，未执行。", "goal_changed")
+                return stop(
+                    "The calendar operation exceeds the original goal. It was not performed.",
+                    "goal_changed",
+                )
             if request.operation != "query":
                 if request.operation != calendar_goal:
-                    return stop("本轮没有对应的日历写入目标，未执行。", "goal_changed")
+                    return stop(
+                        "There is no matching calendar write goal for this request. It was not performed.",
+                        "goal_changed",
+                    )
                 if write_completed:
                     return stop(
-                        "本轮已完成一个日历写入，未重复或追加写入。", "write_limit"
+                        "One calendar write already completed in this request. No repeated or additional write was performed.",
+                        "write_limit",
                     )
             elif calendar_goal in {"update", "cancel"}:
                 # Target discovery is a date-bounded candidate read, not a literal
@@ -424,13 +456,19 @@ def handle_message(
         )
         if fingerprint in seen_requests:
             return stop(
-                "查询或操作条件未变化，已停止重复调用；请补充可区分目标的信息。",
+                "The query or operation is unchanged. Repeated calls stopped; provide information that distinguishes the target.",
                 "repeated_tool",
             )
         if tool_calls >= max_tool_calls:
-            return stop("已达到本轮工具次数上限，未执行后续操作。", "tool_limit")
+            return stop(
+                "The tool-call limit was reached. No further operations were performed.",
+                "tool_limit",
+            )
         if time.monotonic() - started >= max_elapsed_seconds:
-            return stop("已达到本轮处理时限，本次拟议操作未执行。", "time_limit")
+            return stop(
+                "The request time limit was reached. The proposed operation was not performed.",
+                "time_limit",
+            )
         seen_requests.add(fingerprint)
         outcome = _execute_tool(
             request,
@@ -445,7 +483,8 @@ def handle_message(
         if outcome.status != "completed":
             # A failed/uncertain transport is not permission to replay a write.
             return stop(
-                "本轮工具未取得可确认的成功结果，后续操作已停止。", outcome.status
+                "The tool did not return a confirmed successful result. Further operations stopped.",
+                outcome.status,
             )
         state.apply_results(
             email_result=outcome.email_result, calendar_result=outcome.calendar_result
@@ -459,10 +498,13 @@ def handle_message(
                 # A persistence failure must stop execution without hiding the
                 # confirmed side effect or presenting the turn as completed.
                 reply = stop(
-                    "会话保存失败，后续操作已停止。已执行的操作不会因此撤销，请勿重复提交。",
+                    "Conversation saving failed. Further operations stopped. Completed operations are not undone; do not submit them again.",
                     "persistence_failed",
                 )
                 raise ToolCheckpointError(reply) from None
         if decision.result_mode == "direct":
             return finish(_render_tool_receipts(outcomes, calendar_goal))
-    return stop("已达到本轮决策步数上限，未再调用模型或工具。", "step_limit")
+    return stop(
+        "The decision-step limit was reached. No further model or tool calls were made.",
+        "step_limit",
+    )
